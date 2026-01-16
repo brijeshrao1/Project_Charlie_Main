@@ -7957,6 +7957,29 @@ def enforce_sheet_column_limit(df: pd.DataFrame, sheet_name: str):
             )
         )
 
+EXCEL_MAX_ROWS = 900_000  # buffer below 1,048,576
+def write_df_excel_paginated(
+    writer,
+    df: pd.DataFrame,
+    base_sheet_name: str,
+    max_rows: int = EXCEL_MAX_ROWS
+):
+    if len(df) <= max_rows:
+        df.to_excel(writer, index=False, sheet_name=base_sheet_name)
+        return [base_sheet_name]
+
+    sheet_names = []
+    for idx, start in enumerate(range(0, len(df), max_rows), start=1):
+        sheet_name = f"{base_sheet_name}_{idx}"
+        df.iloc[start:start + max_rows].to_excel(
+            writer,
+            index=False,
+            sheet_name=sheet_name
+        )
+        sheet_names.append(sheet_name)
+
+    return sheet_names
+
 
 @app.post("/api/excel/post_validation/validate")
 async def post_validation_excel(
@@ -8306,7 +8329,12 @@ async def post_validation_excel(
             summary_df.to_excel(writer, index=False, header=False, sheet_name="Summary")
             oracle_only_df.to_excel(writer, index=False, sheet_name=sheet_missing_ps)
             legacy_only_df.to_excel(writer, index=False, sheet_name=sheet_missing_oc)
-            validation_df.to_excel(writer, index=False, sheet_name=sheet_discrepancies)
+            discrepancy_sheets = write_df_excel_paginated(
+                writer,
+                validation_df,
+                sheet_discrepancies
+            )
+
             if includeSourceTargetFiles and final_full_df is not None:
                 logger.info("Writing Source-Target data...")
 
@@ -8441,7 +8469,10 @@ async def post_validation_excel(
             # Apply Styles to Data Sheets
             style_sheet_header(sheet_missing_ps, fill_header_ps)
             style_sheet_header(sheet_missing_oc, fill_header_oc)
-            style_sheet_header(sheet_discrepancies, fill_header_err)
+            for sheet in workbook.sheetnames:
+                if sheet.startswith(sheet_discrepancies):
+                    style_sheet_header(sheet, fill_header_err)
+
             
             # --- Full Data Styling ---
             if includeSourceTargetFiles:
