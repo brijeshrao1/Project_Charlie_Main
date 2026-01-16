@@ -8154,9 +8154,11 @@ async def post_validation_excel(
 
             # 1️⃣ Row-level mismatch summary
             mismatch_cols_series = diff_mask.apply(
-                lambda r: ", ".join(r.index[r]),
+                lambda r: ", ".join(r.index[r.to_numpy()]),
                 axis=1
             )
+
+
 
             validation_df = (
                 pd.DataFrame({
