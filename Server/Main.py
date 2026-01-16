@@ -8149,84 +8149,38 @@ async def post_validation_excel(
                 )
 
 
-        # --- [6. Extract Discrepancies - ROBUST & INDEX-SAFE] ---
+        # --- [6. Extract Discrepancies] ---
         if diff_mask.any().any():
-
-            # 1️⃣ Row-level mismatch summary
-            mismatch_cols_series = diff_mask.apply(
-                lambda r: ", ".join(r.index[r.to_numpy()]),
-                axis=1
-            )
-
-
-
-            validation_df = (
-                pd.DataFrame({
-                    "Mismatched Columns": mismatch_cols_series
-                })
-                .query("`Mismatched Columns` != ''")
-                .reset_index()                 # 🔥 FIX: index → column
-                .rename(columns={"index": INTERNAL_KEY})
-            )
-
-            # 2️⃣ Context columns
-            context_cols = list(dict.fromkeys(key_cols_list + included_cols_list))
+            diff_l_stacked = df_l.where(diff_mask).stack()
+            diff_o_stacked = df_o.where(diff_mask).stack()
+            
+            diff_keys = diff_l_stacked.index.get_level_values(0)
+            diff_cols = diff_l_stacked.index.get_level_values(1)
+            
+            legacy_vals = diff_l_stacked.values
+            oracle_vals = diff_o_stacked.values
+            
+            validation_df = pd.DataFrame({
+                INTERNAL_KEY: diff_keys,
+                "Column Name": diff_cols,
+                "PeopleSoft Value": legacy_vals,
+                "Oracle Cloud Value": oracle_vals
+            })
+            
+            context_cols = list(set(key_cols_list + included_cols_list))
             valid_context_cols = [c for c in context_cols if c in legacy_df.columns]
-
-            context_df = (
-                legacy_df[[INTERNAL_KEY] + valid_context_cols]
-                .drop_duplicates(subset=INTERNAL_KEY)
-            )
-
-            validation_df = validation_df.merge(
-                context_df,
-                on=INTERNAL_KEY,
-                how="left"
-            )
-
-            # 3️⃣ Build readable value strings
-            def build_value_string(row, df):
-                cols = row["Mismatched Columns"].split(", ")
-                key = row[INTERNAL_KEY]
-                return "; ".join(
-                    f"{c}={df.at[key, c]}"
-                    for c in cols
-                    if c in df.columns
-                )
-
-            validation_df["PeopleSoft Value"] = validation_df.apply(
-                lambda r: build_value_string(r, df_l),
-                axis=1
-            )
-
-            validation_df["Oracle Cloud Value"] = validation_df.apply(
-                lambda r: build_value_string(r, df_o),
-                axis=1
-            )
-
-            # 4️⃣ Friendly column labels
-            validation_df["Column Name"] = validation_df["Mismatched Columns"].apply(
-                lambda cols: "; ".join(
-                    f"{c} - {mappings_dict.get(c, c)}"
-                    for c in cols.split(", ")
-                )
-            )
-
-            # 5️⃣ Final column order
-            final_report_cols = (
-                key_cols_list
-                + [c for c in included_cols_list if c not in key_cols_list]
-                + ["Column Name", "PeopleSoft Value", "Oracle Cloud Value"]
-            )
-
+            context_df = legacy_df[[INTERNAL_KEY] + valid_context_cols].drop_duplicates(subset=INTERNAL_KEY)
+            
+            validation_df = pd.merge(validation_df, context_df, on=INTERNAL_KEY, how='left')
+            validation_df["Column Name"] = validation_df["Column Name"].apply(lambda x: f"{x} - {mappings_dict.get(x, x)}")
+            
+            final_report_cols = key_cols_list + [c for c in included_cols_list if c not in key_cols_list] + ["Column Name", "PeopleSoft Value", "Oracle Cloud Value"]
             final_report_cols = [c for c in final_report_cols if c in validation_df.columns]
+            
             validation_df = validation_df[final_report_cols]
-
         else:
-            validation_df = pd.DataFrame(
-                [{"Status": "All mapped columns matched perfectly"}]
-            )
-
+            validation_df = pd.DataFrame([{"Status": "All mapped columns matched perfectly"}])
+        
         # --- [NEW] Add Comment Columns to Discrepancies ---
         comment_cols = ["Mythics Comments", "Oracle Comments", "ParkView Comments"]
         for col in comment_cols:
