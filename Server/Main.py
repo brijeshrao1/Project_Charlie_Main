@@ -41,6 +41,7 @@ import xml.etree.ElementTree as ET
 from openpyxl.worksheet.table import Table, TableStyleInfo 
 
 
+# Load environment variables
 load_dotenv()
 ORACLE_USERNAME = os.getenv("ORACLE_USERNAME")
 ORACLE_PASSWORD = os.getenv("ORACLE_PASSWORD")
@@ -7722,21 +7723,21 @@ def get_smart_mapping_from_gemini(legacy_cols: List[str], oracle_cols: List[str]
         )
 
         prompt = f"""
-        You are a Data Integration Expert. 
-        Legacy Columns: {json.dumps(legacy_cols)}
-        Oracle Columns: {json.dumps(oracle_cols)}
+            You are a Data Integration Expert. 
+            Legacy Columns: {json.dumps(legacy_cols)}
+            Oracle Columns: {json.dumps(oracle_cols)}
 
-        Task:
-        1. Map 'Legacy Columns' to semantically similar 'Oracle Columns'.
-        2. Identify which 'Legacy Columns' likely contain DATES (e.g., DOB, Start Date).
-        3. Identify which 'Legacy Columns' likely contain TIMESTAMPS (e.g., Created At, Last Update).
+            Task:
+            1. Map 'Legacy Columns' to semantically similar 'Oracle Columns'.
+            2. Identify which 'Legacy Columns' likely contain DATES (e.g., DOB, Start Date).
+            3. Identify which 'Legacy Columns' likely contain TIMESTAMPS (e.g., Created At, Last Update).
 
-        Return JSON format:
-        {{
-            "mapping": {{ "LegacyCol": "OracleCol", ... }},
-            "date_columns": [ "LegacyCol1", ... ],
-            "timestamp_columns": [ "LegacyCol2", ... ]
-        }}
+            Return JSON format:
+            {{
+                "mapping": {{ "LegacyCol": "OracleCol", ... }},
+                "date_columns": [ "LegacyCol1", ... ],
+                "timestamp_columns": [ "LegacyCol2", ... ]
+            }}
         """
 
         response = model.generate_content(prompt)
@@ -8008,6 +8009,10 @@ async def post_validation_excel(
 
     temp_dir = tempfile.mkdtemp()
     output_path = os.path.join(temp_dir, "PostValidation_Report.xlsx")
+    main_output_path = os.path.join(temp_dir, "PostValidation_Main.xlsx")
+    source_target_output_path = os.path.join(temp_dir, "SourceTarget_Data.xlsx")
+    zip_output_path = os.path.join(temp_dir, "PostValidation_Output.zip")
+
     INTERNAL_KEY = "_derived_key"
 
     try:
@@ -8204,6 +8209,17 @@ async def post_validation_excel(
         else:
             validation_df = pd.DataFrame([{"Status": "All mapped columns matched perfectly"}])
         
+        # --- SORT Data Discrepancies BEFORE pagination ---
+        if "Column Name" in validation_df.columns and not validation_df.empty:
+            sort_cols = ["Column Name"] + [
+                c for c in key_cols_list if c in validation_df.columns
+            ]
+
+            validation_df = validation_df.sort_values(
+                by=sort_cols,
+                kind="mergesort"  # stable sort (important!)
+            ).reset_index(drop=True)
+
         # --- [NEW] Add Comment Columns to Discrepancies ---
         comment_cols = ["Mythics Comments", "Oracle Comments", "ParkView Comments"]
         for col in comment_cols:
@@ -8264,22 +8280,79 @@ async def post_validation_excel(
 
         final_full_df = None
 
-        if includeSourceTargetFiles:
-            logger.info("Including Source-Target Full Data tab...")
-            # existing logic that builds final_full_df
-            final_full_df = pd.concat([matched_df, ps_missing_df, oc_missing_df], ignore_index=True)
-            final_full_df["__order__"] = final_full_df["Record Status"].map({"MATCHED": 0, "MISSING_IN_ORACLE": 1, "MISSING_IN_PEOPLESOFT": 2})
-            final_full_df = final_full_df.sort_values("__order__").drop(columns="__order__")
-            final_full_df.columns = cols_to_compare + cols_to_compare + ["Record Status"]
-        else:
-            logger.info("Skipping Source-Target Full Data tab for performance.")
+        # ALWAYS build Source–Target dataset
+        final_full_df = pd.concat(
+            [matched_df, ps_missing_df, oc_missing_df],
+            ignore_index=True
+        )
+
+        # --- SORT Full Data BEFORE pagination ---
+        final_full_df["__order__"] = final_full_df["Record Status"].map({
+            "MATCHED": 0,
+            "MISSING_IN_ORACLE": 1,
+            "MISSING_IN_PEOPLESOFT": 2
+        })
+
+        # Sort using PeopleSoft-side key columns, in order
+        ps_key_cols = [
+            f"{k}_L" for k in key_cols_list
+            if f"{k}_L" in final_full_df.columns
+        ]
+
+        final_full_df = (
+            final_full_df
+            .sort_values(
+                by=["__order__"] + ps_key_cols,
+                kind="mergesort"   # stable + Excel-friendly
+            )
+            .drop(columns="__order__")
+            .reset_index(drop=True)
+        )
+
         
+
+
 
         EXCEL_MAX_ROWS = 900_000   # stay safe
         def split_dataframe_by_rows(df, max_rows):
             for start in range(0, len(df), max_rows):
                 yield df.iloc[start:start + max_rows]
 
+        def style_full_data_header_only(ws, num_comparison_cols):
+            """
+            Styles the header row of Full Data sheets with appropriate colors.
+            Left half (PeopleSoft) uses blue, right half (Oracle) uses teal.
+            """
+            font_white = Font(name="Calibri", size=9, color="FFFFFF", bold=True)
+            fill_header_ps = PatternFill("solid", fgColor="1F497D")
+            fill_header_oc = PatternFill("solid", fgColor="31869B")
+            border_thin = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+            align_center = Alignment(horizontal="center", vertical="center")
+            
+            ws.freeze_panes = "A2"
+            
+            for cell in ws[1]:
+                cell.font = font_white
+                cell.alignment = align_center
+                cell.border = border_thin
+                
+                # Left half (PeopleSoft) - blue
+                if cell.column <= num_comparison_cols:
+                    cell.fill = fill_header_ps
+                # Right half (Oracle) - teal
+                else:
+                    cell.fill = fill_header_oc
+            
+            # Auto-width columns
+            for col in ws.iter_cols(max_row=50):
+                max_length = 0
+                col_letter = get_column_letter(col[0].column)
+                if col[0].value:
+                    max_length = len(str(col[0].value))
+                for cell in col[1:]:
+                    if cell.value:
+                        max_length = max(max_length, len(str(cell.value)))
+                ws.column_dimensions[col_letter].width = min(max((max_length + 2) * 1.2, 10), 60)
 
         # --- [9. Generate Summary] ---
         total_discrepancies = len(validation_df) if "Status" not in validation_df.columns else 0
@@ -8325,43 +8398,71 @@ async def post_validation_excel(
         enforce_sheet_column_limit(legacy_only_df, "Missing in Oracle Cloud")
         enforce_sheet_column_limit(oracle_only_df, "Missing in PeopleSoft")
 
-        with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
-            summary_df.to_excel(writer, index=False, header=False, sheet_name="Summary")
-            oracle_only_df.to_excel(writer, index=False, sheet_name=sheet_missing_ps)
-            legacy_only_df.to_excel(writer, index=False, sheet_name=sheet_missing_oc)
-            discrepancy_sheets = write_df_excel_paginated(
-                writer,
+        if not includeSourceTargetFiles:
+            with pd.ExcelWriter(source_target_output_path, engine="openpyxl") as st_writer:
+                write_df_excel_paginated(
+                    st_writer,
+                    final_full_df,
+                    sheet_full_data
+                )
+
+                st_workbook = st_writer.book
+                for sheet in st_workbook.sheetnames:
+                    if sheet.startswith(sheet_full_data):
+                        style_full_data_header_only(
+                            st_workbook[sheet],
+                            len(cols_to_compare)
+                        )
+
+        with pd.ExcelWriter(main_output_path, engine="openpyxl") as main_writer:
+            summary_df.to_excel(main_writer, index=False, header=False, sheet_name="Summary")
+            oracle_only_df.to_excel(main_writer, index=False, sheet_name=sheet_missing_ps)
+            legacy_only_df.to_excel(main_writer, index=False, sheet_name=sheet_missing_oc)
+
+            write_df_excel_paginated(
+                main_writer,
                 validation_df,
                 sheet_discrepancies
             )
 
+            main_workbook = main_writer.book
+            if includeSourceTargetFiles:
+                write_df_excel_paginated(
+                    main_writer,
+                    final_full_df,
+                    sheet_full_data
+                )
+
+
+            if final_full_df is not None:
+                with pd.ExcelWriter(source_target_output_path, engine="openpyxl") as st_writer:
+                    write_df_excel_paginated(
+                        st_writer,
+                        final_full_df,
+                        sheet_full_data
+                    )
+
+                    st_workbook = st_writer.book
+
+                    # Style headers for each paginated sheet
+                    for sheet in st_workbook.sheetnames:
+                        if sheet.startswith(sheet_full_data):
+                            style_full_data_header_only(
+                                st_workbook[sheet],
+                                len(cols_to_compare)
+                            )
+
+
+
             if includeSourceTargetFiles and final_full_df is not None:
                 logger.info("Writing Source-Target data...")
 
-                if len(final_full_df) <= EXCEL_MAX_ROWS:
-                    # FAST PATH: single sheet
-                    final_full_df.to_excel(
-                        writer,
-                        index=False,
-                        sheet_name=sheet_full_data
-                    )
-                else:
-                    # SCALE PATH: split sheets
-                    logger.warning("Large dataset detected, splitting Source-Target data into chunks")
+                write_df_excel_paginated(
+                    st_writer,
+                    final_full_df,
+                    sheet_full_data
+                )
 
-                    for idx, chunk in enumerate(
-                        split_dataframe_by_rows(final_full_df, EXCEL_MAX_ROWS),
-                        start=1
-                    ):
-                        chunk_sheet_name = f"{sheet_full_data}_{idx}"
-                        chunk.to_excel(
-                            writer,
-                            index=False,
-                            sheet_name=chunk_sheet_name
-                        )
-
-
-            workbook = writer.book
             
             # --- Styles Definitions ---
             font_white = Font(name="Calibri", size=9, color="FFFFFF", bold=True)
@@ -8379,53 +8480,9 @@ async def post_validation_excel(
             align_center = Alignment(horizontal="center", vertical="center")
             
 
-            def style_full_data_header_only(ws, ps_cols_count):
-                """
-                FAST styling for large sheets:
-                - Styles ONLY headers
-                - No row iteration
-                """
-                ws.insert_rows(1)
-
-                ps_end = ps_cols_count
-                oc_start = ps_end + 1
-                oc_end = ps_end * 2
-
-                # Merge titles
-                ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ps_end)
-                ws.merge_cells(start_row=1, start_column=oc_start, end_row=1, end_column=oc_end)
-
-                ws.cell(row=1, column=1).value = "PeopleSoft"
-                ws.cell(row=1, column=oc_start).value = "Oracle Cloud"
-
-                # Row 1 styling
-                for col in range(1, ps_end + 1):
-                    c = ws.cell(row=1, column=col)
-                    c.fill = fill_header_ps
-                    c.font = font_white
-                    c.alignment = align_center
-
-                for col in range(oc_start, oc_end + 1):
-                    c = ws.cell(row=1, column=col)
-                    c.fill = fill_header_oc
-                    c.font = font_white
-                    c.alignment = align_center
-
-                # Row 2 styling
-                ws.freeze_panes = "A3"
-                for cell in ws[2]:
-                    cell.font = font_white
-                    cell.alignment = align_center
-                    cell.border = border_thin
-                    cell.fill = fill_header_ps if cell.column <= ps_end else fill_header_oc
-
-                # Fixed width = speed
-                for col in range(1, oc_end + 1):
-                    ws.column_dimensions[get_column_letter(col)].width = 20
-
-            
+  
             # --- Updated Helper: Style Sheet Header ---
-            def style_sheet_header(sheet_name, fill_color):
+            def style_sheet_header(workbook, sheet_name, fill_color):
                 if sheet_name in workbook.sheetnames:
                     ws = workbook[sheet_name]
                     ws.freeze_panes = "A2"
@@ -8467,23 +8524,23 @@ async def post_validation_excel(
                                     cell.border = border_thin
 
             # Apply Styles to Data Sheets
-            style_sheet_header(sheet_missing_ps, fill_header_ps)
-            style_sheet_header(sheet_missing_oc, fill_header_oc)
-            for sheet in workbook.sheetnames:
-                if sheet.startswith(sheet_discrepancies):
-                    style_sheet_header(sheet, fill_header_err)
+            style_sheet_header(main_workbook, sheet_missing_ps, fill_header_ps)
+            style_sheet_header(main_workbook, sheet_missing_oc, fill_header_oc)
 
+            for sheet in main_workbook.sheetnames:
+                if sheet.startswith(sheet_discrepancies):
+                    style_sheet_header(main_workbook, sheet, fill_header_err)
             
             # --- Full Data Styling ---
             if includeSourceTargetFiles:
-                for sheet_name in workbook.sheetnames:
+                for sheet_name in main_workbook.sheetnames:
                     if sheet_name.startswith(sheet_full_data):
-                        ws = workbook[sheet_name]
+                        ws = main_workbook[sheet_name]
                         logger.info(f"Styling Source-Target sheet: {sheet_name}")
                         style_full_data_header_only(ws, len(cols_to_compare))
 
             # --- Summary Styling ---
-            ws_sum = workbook["Summary"]
+            ws_sum = main_workbook["Summary"]
             ws_sum.sheet_view.showGridLines = False
             ws_sum.column_dimensions['A'].width = 2
             ws_sum.column_dimensions['B'].width = 45
@@ -8552,11 +8609,30 @@ async def post_validation_excel(
         background_tasks.add_task(_clean, temp_dir)
         report_filename = f"MythicsValidationResults_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
+        report_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        if includeSourceTargetFiles:
+            # Merge behavior → return MAIN file only
+            return FileResponse(
+                main_output_path,
+                filename=f"MythicsValidationResults_{report_ts}.xlsx",
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+        # Else → ZIP BOTH files
+        import zipfile
+        with zipfile.ZipFile(zip_output_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            zipf.write(main_output_path, arcname="PostValidation_Report.xlsx")
+            if os.path.exists(source_target_output_path):
+                zipf.write(source_target_output_path, arcname="SourceTarget_Data.xlsx")
+
+
         return FileResponse(
-            output_path,
-            filename=report_filename,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            zip_output_path,
+            filename=f"MythicsValidationResults_{report_ts}.zip",
+            media_type="application/zip"
         )
+
 
     except HTTPException:
         raise
