@@ -8048,6 +8048,25 @@ async def post_validation_excel(
         legacy_df.columns = legacy_df.columns.astype(str).str.strip()
         oracle_df.columns = oracle_df.columns.astype(str).str.strip()
 
+        # --- [2.1] Align Oracle columns to Legacy column space ---
+        oracle_to_legacy_map = {v: k for k, v in mappings_dict.items()}
+
+        cols_to_rename = {
+            col: oracle_to_legacy_map[col]
+            for col in oracle_df.columns
+            if col in oracle_to_legacy_map
+        }
+
+        oracle_renamed = oracle_df.rename(columns=cols_to_rename)
+
+        missing_keys = [k for k in key_cols_list if k not in oracle_renamed.columns]
+        if missing_keys:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Key columns missing in Oracle after rename: {missing_keys}"
+            )
+
+
         if legacy_df.shape[1] > 450:
             raise HTTPException(
                 status_code=400,
@@ -8064,7 +8083,7 @@ async def post_validation_excel(
         missing = []
         for l, o in mappings_dict.items():
             if l not in legacy_df.columns: missing.append(f"PeopleSoft column '{l}' not found in sheet '{legacy_sheet_param}'")
-            if o not in oracle_df.columns: missing.append(f"Oracle Cloud column '{o}' not found in sheet '{oracle_sheet_param}'")
+            if l not in oracle_renamed.columns: missing.append(f"Oracle Cloud column '{o}' not found in sheet '{oracle_sheet_param}'")
         
         if missing:
             raise HTTPException(status_code=400, detail={"errors": missing})
@@ -8072,14 +8091,16 @@ async def post_validation_excel(
         # --- [3. Vectorized Date Normalization] ---
         logger.info("Normalizing dates...")
         legacy_df = fast_normalize_dates(legacy_df, legacy_date_cols)
-        oracle_df = fast_normalize_dates(oracle_df, target_date_cols)
+        oracle_renamed = fast_normalize_dates(oracle_renamed, target_date_cols)
 
         # --- [4. Vectorized Key Generation] ---
         logger.info("Generating keys...")
         legacy_df[INTERNAL_KEY] = fast_generate_key(legacy_df, key_cols_list)
         
-        oracle_key_cols = [mappings_dict.get(k, k) for k in key_cols_list]
-        oracle_df[INTERNAL_KEY] = fast_generate_key(oracle_df, oracle_key_cols)
+        oracle_renamed[INTERNAL_KEY] = fast_generate_key(
+            oracle_renamed,
+            key_cols_list
+        )
 
         # --- [5. Comparison Logic] ---
         logger.info("Comparing data...")
@@ -8120,9 +8141,6 @@ async def post_validation_excel(
 
 
         
-        oracle_to_legacy_map = {v: k for k, v in mappings_dict.items()}
-        cols_to_rename = {col: oracle_to_legacy_map[col] for col in oracle_df.columns if col in oracle_to_legacy_map}
-        oracle_renamed = oracle_df.rename(columns=cols_to_rename)
 
         cols_to_compare = list(mappings_dict.keys())
         cols_to_compare = [c for c in cols_to_compare if c in legacy_df.columns and c in oracle_renamed.columns]
@@ -8372,7 +8390,7 @@ async def post_validation_excel(
             ["", "PeopleSoft File Name", legacyFile.filename, "", "", ""],
             ["", "PeopleSoft Records Count", len(legacy_df), "", "", ""],
             ["", "Oracle Cloud File Name", oracleFile.filename, "", "", ""],
-            ["", "Oracle Cloud Records Count", len(oracle_df), "", "", ""],
+            ["", "Oracle Cloud Records Count", len(oracle_renamed), "", "", ""],
             ["", "Validation DateTime", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "", "", ""],
             ["", "", "", "", "", ""],
 
