@@ -8243,11 +8243,13 @@ async def post_validation_excel(
         common_keys = merged.index
         
         legacy_only_df = legacy_df[~legacy_df[INTERNAL_KEY].isin(common_keys)].copy()
-        oracle_only_df = oracle_df[~oracle_df[INTERNAL_KEY].isin(common_keys)].copy()
+        oracle_only_df = oracle_renamed[~oracle_renamed[INTERNAL_KEY].isin(common_keys)].copy()
+
         
         if INTERNAL_KEY in legacy_only_df.columns: legacy_only_df.drop(columns=[INTERNAL_KEY], inplace=True)
         if INTERNAL_KEY in oracle_only_df.columns: oracle_only_df.drop(columns=[INTERNAL_KEY], inplace=True)
-
+        if INTERNAL_KEY in oracle_only_df.columns:
+            oracle_only_df.drop(columns=[INTERNAL_KEY], inplace=True)
         # --- [NEW] Add Comment Columns to Missing Record DFs ---
         for col in comment_cols:
             legacy_only_df[col] = ""
@@ -8269,14 +8271,19 @@ async def post_validation_excel(
         ps_missing_df = pd.DataFrame(ps_missing_rows)
 
         oc_missing_rows = []
+
         for _, row in oracle_only_df.iterrows():
             record = {}
+
             for col in cols_to_compare:
                 record[f"{col}_L"] = ""
-                record[f"{col}_O"] = row.get(col, "")
+                record[f"{col}_O"] = row[col]  # ✅ now exists
+
             record["Record Status"] = "MISSING_IN_PEOPLESOFT"
             oc_missing_rows.append(record)
+
         oc_missing_df = pd.DataFrame(oc_missing_rows)
+
 
         final_full_df = None
 
