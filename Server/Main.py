@@ -8638,6 +8638,7 @@ async def post_validation_excel(
 
         if includeSourceTargetFiles:
             # Merge behavior → return MAIN file only
+            logger.info("Returning MAIN file with embedded Source-Target data...")
             return FileResponse(
                 main_output_path,
                 filename=f"MythicsValidationResults_{report_ts}.xlsx",
@@ -8651,7 +8652,7 @@ async def post_validation_excel(
             if os.path.exists(source_target_output_path):
                 zipf.write(source_target_output_path, arcname="SourceTarget_Data.xlsx")
 
-
+        logger.info("Returning ZIP file with results...")
         return FileResponse(
             zip_output_path,
             filename=f"MythicsValidationResults_{report_ts}.zip",
