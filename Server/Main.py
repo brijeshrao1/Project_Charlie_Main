@@ -7694,7 +7694,7 @@ async def get_excel_sheets(
             status_code=500,
         )
     
-GOOGLE_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyDeLayqDoueLSYi4p4xRvC22TcjF362-UM')
+GOOGLE_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyCpFnUH9pxeU4ILaN1JwI6ocU0p4Ivrlyo')
 genai.configure(api_key=GOOGLE_API_KEY)
 
 def get_smart_mapping_from_gemini(legacy_cols: List[str], oracle_cols: List[str]):
