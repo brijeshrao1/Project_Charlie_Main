@@ -1,30 +1,16 @@
---only-binary=:all:
-
-# ---- Core API ----
-fastapi==0.109.0
-uvicorn==0.27.0
-
-# ---- Excel / Data ----
-pandas==2.1.4
-numpy==1.26.4
-openpyxl==3.1.2
-xlsxwriter==3.1.9
-python-dateutil==2.8.2
-python-calamine==0.1.7
-
-# ---- File upload ----
-python-multipart==0.0.6
-
-# ---- Config ----
-python-dotenv==1.0.0
-
-# ---- HTTP ----
-requests==2.31.0
-httpx==0.26.0
-
-# ---- System ----
-psutil==5.9.8
-
-# ---- AI (optional, pinned) ----
-ollama==0.1.7
-google-generativeai==0.3.2
+fastapi
+uvicorn
+pandas
+openpyxl
+python-calamine
+xlsxwriter
+pydantic
+python-multipart 
+requests
+python-dateutil 
+numpy
+dotenv
+httpx
+ollama
+psutil
+google-generativeai

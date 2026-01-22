@@ -35,134 +35,26 @@ FOR /D /R %%d IN (__pycache__) DO (
     rmdir /S /Q "%%d"
 )
 
-:: Step 2: Enforce Python 3.11.x
+:: Step 2: Check Python
 echo.
-echo [2] Enforcing Python 3.11.x...
-
-set PY_OK=0
-
-python --version >nul 2>&1
-IF %ERRORLEVEL% EQU 0 (
-    FOR /F "tokens=2 delims= " %%V IN ('python --version') DO SET PYVER=%%V
-    echo Detected Python %PYVER%
-    echo %PYVER% | findstr /R "^3\.11\." >nul
-    IF %ERRORLEVEL% EQU 0 (
-        set PY_OK=1
-        echo ✅ Correct Python version detected.
-    )
-)
-
-IF %PY_OK% EQU 1 GOTO PYTHON_OK
-
-echo ⚠️ Incorrect or missing Python version. Forcing reinstall of Python 3.11.5...
-
-:: --- Attempt silent uninstall of existing Python installations ---
-echo 🧹 Attempting to uninstall existing Python installations...
-
-for /f "tokens=*" %%i in ('wmic product where "name like '%%Python%%'" get IdentifyingNumber ^| find "{"') do (
-    echo 🔥 Uninstalling Python %%i ...
-    msiexec /x %%i /quiet /norestart
-)
-
-:: --- Remove Windows Store Python aliases ---
-echo 🧹 Disabling Windows Store Python aliases...
-powershell -Command ^
-"Get-AppxPackage *Python* | Remove-AppxPackage -AllUsers" >nul 2>&1
-
-:: --- Install Python 3.11.5 ---
-echo 📥 Downloading Python 3.11.5 installer...
-powershell -Command ^
-"Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.5/python-3.11.5-amd64.exe' -OutFile 'python-3.11.5.exe'"
-
-echo 🔧 Installing Python 3.11.5 silently...
-start /wait python-3.11.5.exe ^
-/quiet ^
-InstallAllUsers=1 ^
-PrependPath=1 ^
-Include_test=0 ^
-SimpleInstall=1
-
-del python-3.11.5.exe
-
-:: --- Re-check Python ---
-echo 🔁 Verifying Python installation...
+echo [2] Checking Python...
 python --version >nul 2>&1
 IF %ERRORLEVEL% NEQ 0 (
-    echo ❌ Python installation failed.
-    pause
-    popd
-    exit /b
-)
+    echo ❌ Python not found. Installing Python 3.11...
+    powershell -Command "Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.5/python-3.11.5-amd64.exe' -OutFile 'python-installer.exe'"
+    echo 🔄 Launching Python installer...
+    start /wait python-installer.exe /quiet InstallAllUsers=1 PrependPath=1 Include_test=0
+    del python-installer.exe
 
-FOR /F "tokens=2 delims= " %%V IN ('python --version') DO SET PYVER=%%V
-echo Installed Python %PYVER%
-
-echo %PYVER% | findstr /R "^3\.11\." >nul
-IF %ERRORLEVEL% NEQ 0 (
-    echo ❌ Python version mismatch after install. Found %PYVER%
-    pause
-    popd
-    exit /b
-)
-
-echo ✅ Python 3.11.x enforced successfully.
-
-:PYTHON_OK
-
-
-:: Step 2.1: Force Python 3.11.5 installation if not present
-echo.
-echo [2.1] Ensuring Python 3.11.5 is installed...
-
-set NEED_INSTALL=1
-
-python --version >nul 2>&1
-IF %ERRORLEVEL% EQU 0 (
-    FOR /F "tokens=2 delims= " %%V IN ('python --version') DO SET PYVER=%%V
-    echo Detected Python %PYVER%
-    echo %PYVER% | findstr /R "^3\.11\." >nul
-    IF %ERRORLEVEL% EQU 0 (
-        echo ✅ Python 3.11.x already installed.
-        set NEED_INSTALL=0
+    echo 🔁 Re-checking Python after install...
+    python --version >nul 2>&1
+    IF %ERRORLEVEL% NEQ 0 (
+        echo ❌ Python installation failed or not in PATH.
+        pause
+        popd
+        exit /b
     )
 )
-echo %PYVER% | findstr /R "^3\.1[2-9]\." >nul
-IF %ERRORLEVEL% EQU 0 (
-    echo ❌ Unsupported Python version detected: %PYVER%
-    echo Python 3.11.x ONLY is supported.
-    echo Removing incompatible Python...
-)
-
-IF %NEED_INSTALL% EQU 0 GOTO PY_READY
-
-echo ⚠️ Python 3.11.x not found. Installing Python 3.11.5 automatically...
-
-:: --- Remove Windows Store Python aliases (critical) ---
-powershell -Command "Get-AppxPackage *Python* | Remove-AppxPackage -AllUsers" >nul 2>&1
-
-:: --- Download installer ---
-echo 📥 Downloading Python 3.11.5...
-powershell -Command ^
-"Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.5/python-3.11.5-amd64.exe' -OutFile 'python-3.11.5.exe'"
-
-:: --- Silent install ---
-echo 🔧 Installing Python 3.11.5...
-start /wait python-3.11.5.exe ^
-/quiet ^
-InstallAllUsers=1 ^
-PrependPath=1 ^
-Include_test=0 ^
-SimpleInstall=1
-
-del python-3.11.5.exe
-
-echo 🔁 Restarting script to refresh PATH...
-start "" "%~f0"
-exit /b
-
-:PY_READY
-echo ✅ Python 3.11.x is ready.
-
 
 :: Step 3: Create virtual environment
 echo.
@@ -186,64 +78,21 @@ IF %ERRORLEVEL% NEQ 0 (
     exit /b
 )
 
-:: Upgrade pip inside venv
-echo.
-echo [4.1] Upgrading pip...
-venv\Scripts\python.exe -m pip install --upgrade pip
-
-:: Step 5: Install dependencies (clean + deterministic)
+:: Step 5: Install dependencies
 echo.
 echo [5] Installing dependencies...
-
 IF EXIST requirements.txt (
     echo ✅ Found requirements.txt
+    venv\Scripts\python.exe -m pip install -r requirements.txt
 ) ELSE IF EXIST Requirements.txt (
-    ren Requirements.txt requirements.txt
-    echo ✅ Renamed Requirements.txt → requirements.txt
+    echo ✅ Found Requirements.txt
+    venv\Scripts\python.exe -m pip install -r Requirements.txt
 ) ELSE (
-    echo ❌ No requirements.txt found.
+    echo ❌ No requirements file found.
     pause
     popd
     exit /b
 )
-
-echo 🧹 Removing cached wheels...
-venv\Scripts\python.exe -m pip cache purge >nul 2>&1
-
-echo 📦 Installing pinned dependencies...
-venv\Scripts\python.exe -m pip install --no-cache-dir -r requirements.txt
-IF %ERRORLEVEL% NEQ 0 (
-    echo ❌ Dependency installation failed.
-    pause
-    popd
-    exit /b
-)
-
-:: Step 5.1: Verify critical package versions
-echo.
-echo [5.1] Verifying environment versions...
-
-echo import sys > verify_env.py
-echo import pandas, numpy, openpyxl >> verify_env.py
-echo print("Python:", sys.version) >> verify_env.py
-echo print("pandas:", pandas.__version__) >> verify_env.py
-echo print("numpy:", numpy.__version__) >> verify_env.py
-echo print("openpyxl:", openpyxl.__version__) >> verify_env.py
-echo assert pandas.__version__ == "2.1.4" >> verify_env.py
-echo assert openpyxl.__version__ == "3.1.2" >> verify_env.py
-
-venv\Scripts\python.exe verify_env.py
-IF %ERRORLEVEL% NEQ 0 (
-    echo ❌ Environment verification failed.
-    del verify_env.py
-    pause
-    popd
-    exit /b
-)
-
-del verify_env.py
-echo ✅ Environment verified successfully.
-
 
 :: Step 6: Verify Main.py exists
 echo.

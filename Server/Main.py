@@ -39,7 +39,7 @@ from openpyxl.styles import PatternFill, Border, Side, Font, Alignment
 from openpyxl.utils import get_column_letter
 import xml.etree.ElementTree as ET
 from openpyxl.worksheet.table import Table, TableStyleInfo 
-
+from datetime import datetime, timezone
 
 # Load environment variables
 load_dotenv()
@@ -52,6 +52,10 @@ app = FastAPI(
     description="API to transform and download Excel files.",
     version="1.0.0"
 )
+
+# datetime
+
+now_ts = datetime.now(timezone.utc)
 
 app.add_middleware(
     CORSMiddleware,
@@ -8033,17 +8037,21 @@ async def post_validation_excel(
         legacy_sheet_param = legacySheet if legacySheet and legacySheet.strip() else 0
         oracle_sheet_param = oracleSheet if oracleSheet and oracleSheet.strip() else 0
 
+        legacy_bytes = await legacyFile.read()
+        oracle_bytes = await oracleFile.read()
+
         legacy_df = pd.read_excel(
-            io.BytesIO(await legacyFile.read()), 
+            io.BytesIO(legacy_bytes),
             sheet_name=legacy_sheet_param,
             dtype=object
         )
-        
+
         oracle_df = pd.read_excel(
-            io.BytesIO(await oracleFile.read()), 
+            io.BytesIO(oracle_bytes),
             sheet_name=oracle_sheet_param,
             dtype=object
         )
+
 
         legacy_df.columns = legacy_df.columns.astype(str).str.strip()
         oracle_df.columns = oracle_df.columns.astype(str).str.strip()
@@ -8157,11 +8165,7 @@ async def post_validation_excel(
         l_suffix_cols = [c + '_L' for c in cols_to_compare]
         o_suffix_cols = [c + '_O' for c in cols_to_compare]
         
-        try:
-            with pd.option_context('future.no_silent_downcasting', True):
-                df_l = merged[l_suffix_cols].fillna("").astype(str)
-                df_o = merged[o_suffix_cols].fillna("").astype(str)
-        except Exception:
+        with pd.option_context("mode.copy_on_write", True):
             df_l = merged[l_suffix_cols].fillna("").astype(str)
             df_o = merged[o_suffix_cols].fillna("").astype(str)
 
@@ -8396,7 +8400,7 @@ async def post_validation_excel(
             ["", "PeopleSoft Records Count", len(legacy_df), "", "", ""],
             ["", "Oracle Cloud File Name", oracleFile.filename, "", "", ""],
             ["", "Oracle Cloud Records Count", len(oracle_renamed), "", "", ""],
-            ["", "Validation DateTime", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "", "", ""],
+            ["", "Validation DateTime", now_ts.strftime("%Y-%m-%d %H:%M:%S"), "", "", ""],
             ["", "", "", "", "", ""],
 
             ["", "Missing Records Summary", "", "Mythics Comments", "Oracle Comments", "ParkView Comments"],
@@ -8549,9 +8553,8 @@ async def post_validation_excel(
                         for col_idx in comment_col_indices:
                             # Iterate cells in this column starting from row 2
                             # Using iter_cols for just this column is cleaner
-                            for col_cells in ws.iter_cols(min_col=col_idx, max_col=col_idx, min_row=2, max_row=ws.max_row):
-                                for cell in col_cells:
-                                    cell.border = border_thin
+                            for row in ws.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx):
+                                row[0].border = border_thin
 
             # Apply Styles to Data Sheets
             style_sheet_header(main_workbook, sheet_missing_ps, fill_header_ps)
@@ -8632,8 +8635,9 @@ async def post_validation_excel(
 
         logger.info(f"Process completed in {time.time() - start_time:.2f} seconds.")
 
-        def _clean(path):
-            try: shutil.rmtree(path, ignore_errors=True)
+        def _clean(path: str) -> None:
+            try:
+                shutil.rmtree(path, ignore_errors=True)
             except: pass
 
         background_tasks.add_task(_clean, temp_dir)
@@ -8643,7 +8647,6 @@ async def post_validation_excel(
 
         if includeSourceTargetFiles:
             # Merge behavior → return MAIN file only
-            logger.info("Returning MAIN file with embedded Source-Target data...")
             return FileResponse(
                 main_output_path,
                 filename=f"MythicsValidationResults_{report_ts}.xlsx",
@@ -8657,7 +8660,7 @@ async def post_validation_excel(
             if os.path.exists(source_target_output_path):
                 zipf.write(source_target_output_path, arcname="SourceTarget_Data.xlsx")
 
-        logger.info("Returning ZIP file with results...")
+
         return FileResponse(
             zip_output_path,
             filename=f"MythicsValidationResults_{report_ts}.zip",
