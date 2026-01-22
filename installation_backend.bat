@@ -126,6 +126,12 @@ IF %ERRORLEVEL% EQU 0 (
         set NEED_INSTALL=0
     )
 )
+echo %PYVER% | findstr /R "^3\.1[2-9]\." >nul
+IF %ERRORLEVEL% EQU 0 (
+    echo ❌ Unsupported Python version detected: %PYVER%
+    echo Python 3.11.x ONLY is supported.
+    echo Removing incompatible Python...
+)
 
 IF %NEED_INSTALL% EQU 0 GOTO PY_READY
 
