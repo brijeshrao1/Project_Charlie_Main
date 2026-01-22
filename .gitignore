@@ -37,3 +37,4 @@ Server/soap_request_Assignment_Report.xml
 Server/Required_files/Venkataraman_Test_Assignment_Report.csv
 *.csv
 Server/api_keys.env
+/venv

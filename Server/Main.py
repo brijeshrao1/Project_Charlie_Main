@@ -41,6 +41,14 @@ import xml.etree.ElementTree as ET
 from openpyxl.worksheet.table import Table, TableStyleInfo 
 
 
+def resource_path(relative_path: str):
+    import sys
+    from pathlib import Path
+    if getattr(sys, 'frozen', False):
+        return Path(sys._MEIPASS) / relative_path
+    return Path(relative_path)
+
+
 # Load environment variables
 load_dotenv()
 ORACLE_USERNAME = os.getenv("ORACLE_USERNAME")
@@ -62,15 +70,18 @@ app.add_middleware(
     expose_headers=["X-Bundle-Filename", "Content-Disposition"]
 )
 
-UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR = resource_path("uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 VALIDATION_RESULTS_DIR = UPLOAD_DIR / "validation_results"
 VALIDATION_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-COMPLETED_FOLDER = Path("validation/completed/Excel_Files")
+COMPLETED_FOLDER = resource_path("validation/completed/Excel_Files")
 COMPLETED_FOLDER.mkdir(parents=True, exist_ok=True) 
-EXCEL_FILE_PATH = Path("Required_files/HDL_BO_Hierarchy_All_Objects_Charlie.xlsx")
-TRANSFORMATION_ATTRIBUTES_FILE_PATH = Path("Required_files/Transformation - Common Attributes v3 2.xlsx")
+EXCEL_FILE_PATH = resource_path("Required_files/HDL_BO_Hierarchy_All_Objects_Charlie.xlsx")
+TRANSFORMATION_ATTRIBUTES_FILE_PATH = resource_path("Required_files/Transformation - Common Attributes v3 2.xlsx")
+
+
+
 
 # Configure logging
 LOG_FILE_PATH = "server.log"    
@@ -376,7 +387,7 @@ def root():
     return {"message": "Hit /api/utils/menu-items to get the 8-level hierarchy tree."}
 
 
-USER_EXCEL_FILE_PATH = Path("Required_files/Users.xlsx")
+USER_EXCEL_FILE_PATH = resource_path("Required_files/Users.xlsx")
 def load_user_data(file_path: Path):
     try:
         # Assuming it's an Excel file that pandas can read, or a CSV named .xlsx
@@ -433,7 +444,7 @@ async def login_access(user_login: UserLogin):
             detail="Invalid username or password"
         )
 
-ENV_PATH = Path(".env")
+ENV_PATH = resource_path(".env")
 @app.get("/api/utils/hdl/menu-items")
 def get_hierarchy_api():
     # Validate Excel path
@@ -1042,7 +1053,7 @@ async def get_attribute_mapping(attribute: str = Query(..., description="The att
 
 
 # Define the path to your transformation attributes Excel file
-TRANSFORMATION_ATTRIBUTES_FILE_PATH = Path("./Required_files/Transformation - Common Attributes v3 2.xlsx")
+TRANSFORMATION_ATTRIBUTES_FILE_PATH = resource_path("./Required_files/Transformation - Common Attributes v3 2.xlsx")
 
 # Ensure the Required_files directory exists
 TRANSFORMATION_ATTRIBUTES_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -1233,7 +1244,7 @@ async def save_code(request: Request):
             f.write(code)
 
         # Load existing JSON
-        json_path = Path("Required_files/Available_NLP.json")
+        json_path = resource_path("Required_files/Available_NLP.json")
         data = []
         if json_path.exists():
             try:
@@ -1274,13 +1285,13 @@ async def save_code(request: Request):
         return {"success": False, "error": str(e)}
 
 
-JSON_PATH = Path("Required_files/Available_NLP.json")
+JSON_PATH = resource_path("Required_files/Available_NLP.json")
 
 
 @app.get("/api/hdl/get_rules")
 async def get_rules(customerName: str, instanceName: str, componentName: str):
     try:
-        json_path = Path("Required_files/Available_NLP.json")
+        json_path = resource_path("Required_files/Available_NLP.json")
         if not json_path.exists():
             return {"rules": []}
 
@@ -1318,7 +1329,7 @@ def get_nlr_rules_batch(
     """
     try:
         import openpyxl
-        excel_path = Path("Required_files/Available_NLP.xlsx")
+        excel_path = resource_path("Required_files/Available_NLP.xlsx")
         if not excel_path.exists():
             return JSONResponse(status_code=404, content={"error": "NLR rules file not found."})
 
@@ -1359,7 +1370,7 @@ def get_nlr_rules_batch(
   
 
 # DIR for bulk excel upload (redefined for clarity, or can use UPLOAD_DIR)
-DIR = Path("uploads/Excel_Files")
+DIR = resource_path("uploads/Excel_Files")
 DIR.mkdir(parents=True, exist_ok=True) # Ensure this directory exists at startup
 
 def populate_actual_termination_date_from_resignation(
@@ -2146,7 +2157,7 @@ async def bulk_excel_upload(
 
 
 # Mount the static directory for Dat_Files. Ensure the directory exists.
-DAT_FILES_DIR = Path("Required_files/Dat_Files")
+DAT_FILES_DIR = resource_path("Required_files/Dat_Files")
 DAT_FILES_DIR.mkdir(parents=True, exist_ok=True) # Ensure this directory exists at startup
 app.mount("/static", StaticFiles(directory=DAT_FILES_DIR), name="static_dat_files")
 
@@ -2473,7 +2484,7 @@ def base64_to_dataframe(base64_string: str) -> pd.DataFrame:
 
 def get_hdl_setup_validate_fetch(customer_name: str, instance_name: str) -> dict:
     try:
-        setup_dir = Path("User/setup_files")
+        setup_dir = resource_path("User/setup_files")
 
         filename = f"{customer_name.replace(' ', '_')}_{instance_name.replace(' ', '_')}_setup.json"
         filepath = setup_dir / filename
@@ -3043,7 +3054,7 @@ async def validate_data(payload: ValidatePayload):
         # Save the Excel file to the determined path
         with open(store_excel, "wb") as f:
             f.write(excel_bytes)
-        file_path_in_static = Path("uploads/Excel_Files") / (global_bo_name or component_name) / excel_filename
+        file_path_in_static = resource_path("uploads/Excel_Files") / (global_bo_name or component_name) / excel_filename
         # Load Excel file into DataFrame
         df = pd.read_excel(excel_file_io, engine='openpyxl')
         df.columns = [str(col).strip() for col in df.columns]
@@ -3059,7 +3070,7 @@ async def validate_data(payload: ValidatePayload):
     # =========================================================================
         if component_name.lower() == "assignment":
             delta_filename = f"{customerName}_{instanceName}_{component_name}_Report.csv"
-            delta_file_path = Path("required_files") / delta_filename
+            delta_file_path = resource_path("required_files") / delta_filename
             
             file_loaded = False
 
@@ -4087,7 +4098,7 @@ async def validate_personname(
 
 
 # --- Define the base directory for uploads, matching the bulk upload script ---
-UPLOAD_DIR = Path("uploads/Excel_Files")
+UPLOAD_DIR = resource_path("uploads/Excel_Files")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True) # Ensure the base directory exists
 
 # --- Define the request body model using Pydantic for automatic validation ---
@@ -5656,7 +5667,7 @@ def save_envs(customers: List[CustomerModel]):
         if not env_lines:
             raise HTTPException(status_code=400, detail="No valid instance data to write to .env")
 
-        env_path = Path(".env")
+        env_path = resource_path(".env")
         with env_path.open("w", encoding="utf-8") as f:
             f.write("\n".join(env_lines) + "\n")
 
@@ -5674,7 +5685,7 @@ def save_envs(customers: List[CustomerModel]):
 @app.get("/api/customers")
 def get_customers_from_root_env():
     try:
-        env_path = Path(".env")
+        env_path = resource_path(".env")
         if not env_path.exists():
             raise HTTPException(status_code=404, detail=".env file not found at root")
 
@@ -6287,7 +6298,7 @@ class HDLSetupPayload(BaseModel):
 def save_hdl_setup(data: HDLSetupPayload):
     try:
         # Construct directory and filename
-        setup_dir = Path("User/setup_files")
+        setup_dir = resource_path("User/setup_files")
         setup_dir.mkdir(parents=True, exist_ok=True)
 
         # Normalize file name
@@ -6313,7 +6324,7 @@ def get_hdl_setup(
     instance_name: str 
 ):
     try:
-        setup_dir = Path("User/setup_files")
+        setup_dir = resource_path("User/setup_files")
         filename = f"{customer_name.replace(' ', '_')}_{instance_name.replace(' ', '_')}_setup.json"
         filepath = setup_dir / filename
 
@@ -6716,7 +6727,7 @@ def parse_soap_response_to_csv(xml_path: str, output_csv_path: str = "output.csv
 @app.get("/api/lookupdata/available")
 def get_available_lookupdata_files(customerName: str = "", instanceName: str = ""):
     try:
-        lookupdata_dir = Path("Required_files")
+        lookupdata_dir = resource_path("Required_files")
         pattern = f"{customerName}_{instanceName}_LookupData.xlsx" if customerName and instanceName else "*_LookupData.xlsx"
         files = list(lookupdata_dir.glob(pattern))
         file_list = [f.name for f in files]
@@ -6730,7 +6741,7 @@ def get_available_lookupdata_files(customerName: str = "", instanceName: str = "
 @app.get("/api/mandatoryfields/available")
 def get_available_mandatoryfields_files(customerName: str = "", instanceName: str = ""):
     try:
-        mandatoryfields_dir = Path("Required_files")
+        mandatoryfields_dir = resource_path("Required_files")
         pattern = f"{customerName}_{instanceName}_MandatoryFields.xlsx" if customerName and instanceName else "*_MandatoryFields.xlsx"
         files = list(mandatoryfields_dir.glob(pattern))
         file_list = [f.name for f in files]
@@ -6743,7 +6754,7 @@ def get_available_mandatoryfields_files(customerName: str = "", instanceName: st
         
 
 
-ENV_DIR = Path("Required_files/env_store")
+ENV_DIR = resource_path("Required_files/env_store")
 ENV_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -6816,7 +6827,7 @@ def merge_env_files(customers: List[Dict]):
 
 
 
-ENV_FILE = Path(".env")
+ENV_FILE = resource_path(".env")
 # ✅ Delete customer
 @app.delete("/api/customers/{customer_name}")
 @app.delete("/api/customers/{customer_name}/{instance_name}")
@@ -6933,7 +6944,7 @@ async def reset_system(
             VALIDATION_RESULTS_DIR,
             COMPLETED_FOLDER,
             BUNDLE_DEPOT_ZONE,
-            Path("uploads/user")  # User saved component data
+            resource_path("uploads/user")  # User saved component data
         ]
 
         # Files to keep (configuration files)
@@ -6941,9 +6952,9 @@ async def reset_system(
             EXCEL_FILE_PATH,
             TRANSFORMATION_ATTRIBUTES_FILE_PATH,
             USER_EXCEL_FILE_PATH,
-            Path("Required_files/Mandatory Fields.xlsx"),
-            Path("Required_files/Available_NLP.xlsx"),
-            Path(".env")  # Keep .env file structure but clear sensitive data in hard reset
+            resource_path("Required_files/Mandatory Fields.xlsx"),
+            resource_path("Required_files/Available_NLP.xlsx"),
+            resource_path(".env")  # Keep .env file structure but clear sensitive data in hard reset
         ]
 
         if reset_type == "soft":
@@ -6973,7 +6984,7 @@ async def reset_system(
         elif reset_type == "hard":
             # Hard reset - remove everything except essential configuration
             reset_log.append("🔥 Performing HARD reset...")
-            combos = extract_customer_instance_names_from_env(env_path=Path(".env"))
+            combos = extract_customer_instance_names_from_env(env_path=resource_path(".env"))
             customerName = combos[0][0] if combos else ""
             instanceName = combos[0][1] if combos else ""
             reset_log.append(f"Identified customer: {customerName}, instance: {instanceName}")
@@ -6981,14 +6992,14 @@ async def reset_system(
             lookupdata_pattern = f"{customerName}_{instanceName}_LookupData.xlsx"
             mandatory_pattern = f"{customerName}_{instanceName}_MandatoryFields.xlsx"
             try: 
-                for file in Path("Required_files").glob(lookupdata_pattern):
+                for file in resource_path("Required_files").glob(lookupdata_pattern):
                     file.unlink()
                     reset_log.append(f"🗑️ Deleted LookupData file: {file}")
             except Exception as e:
                 reset_log.append(f"⚠️ Failed to delete LookupData files: {e}")
             
             try:
-                for file in Path("Required_files").glob(mandatory_pattern):
+                for file in resource_path("Required_files").glob(mandatory_pattern):
                     file.unlink()
                     reset_log.append(f"🗑️ Deleted MandatoryFields file: {file}")
             except Exception as e:
@@ -7014,7 +7025,7 @@ async def reset_system(
             reset_log.append("✅ Cleared environment variables from memory")
 
             # Reset .env file to default template (keep structure but clear sensitive data)
-            env_file = Path(".env")
+            env_file = resource_path(".env")
             if env_file.exists():
                 # Create a minimal .env template
                 minimal_env_content = """"""
@@ -7035,7 +7046,7 @@ async def reset_system(
                 COMPLETED_FOLDER,
                 BUNDLE_DEPOT_ZONE,
                 DAT_FILES_DIR,
-                Path("uploads/user")
+                resource_path("uploads/user")
             ]
             
             for dir_path in essential_dirs:
@@ -7134,9 +7145,9 @@ async def get_system_status(admin_token: str = Query(...)):
             "hierarchy_excel": EXCEL_FILE_PATH,
             "transformation_attributes": TRANSFORMATION_ATTRIBUTES_FILE_PATH,
             "user_database": USER_EXCEL_FILE_PATH,
-            "mandatory_fields": Path("Required_files/Mandatory Fields.xlsx"),
-            "nlp_rules": Path("Required_files/Available_NLP.xlsx"),
-            "environment_file": Path(".env")
+            "mandatory_fields": resource_path("Required_files/Mandatory Fields.xlsx"),
+            "nlp_rules": resource_path("Required_files/Available_NLP.xlsx"),
+            "environment_file": resource_path(".env")
         }
 
         for name, file_path in important_files.items():
@@ -7166,7 +7177,7 @@ async def get_system_status(admin_token: str = Query(...)):
         )
     
 #------------- HDL Job Management ------------------#
-DATA_FILE = Path("hdl_jobs.json")
+DATA_FILE = resource_path("hdl_jobs.json")
 
 
 class HDLJob(BaseModel):
@@ -7416,7 +7427,7 @@ async def parse_file(
 @app.get("/api/hdl/precheck/list")
 async def available_precheck_values():
     """Fetch available pre-check validation rules from JSON file."""
-    CHECKLIST_FILE = Path("Required_files/precheck_validation_rules.json")
+    CHECKLIST_FILE = resource_path("Required_files/precheck_validation_rules.json")
     try:
         if not CHECKLIST_FILE.exists():
             raise HTTPException(status_code=404, detail="Pre-check validation rules file not found")
@@ -7446,7 +7457,7 @@ async def fetch_precheck_report(componentId: str, req: PrecheckReportRequest):
     customerName = req.customerName.strip()
     instanceName = req.instanceName.strip()
 
-    CHECKLIST_FILE = Path("Required_files/precheck_validation_rules.json")
+    CHECKLIST_FILE = resource_path("Required_files/precheck_validation_rules.json")
 
     if not CHECKLIST_FILE.exists():
         raise HTTPException(status_code=404, detail="Precheck JSON not found")
@@ -7562,7 +7573,7 @@ async def fetch_precheck_report(componentId: str, req: PrecheckReportRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-CHECKLIST_FILE = Path("Required_files/precheck_validation_rules.json")
+CHECKLIST_FILE = resource_path("Required_files/precheck_validation_rules.json")
 
 @app.post("/api/hdl/precheck/reports/upload/{id}")
 async def upload_precheck_userdata(
@@ -7664,7 +7675,7 @@ async def get_excel_sheets(
             columns_dict[sheet] = df.columns.tolist()
 
         # Prepare save directory
-        save_dir = Path("Required_files/Post-Validation_Excels")
+        save_dir = resource_path("Required_files/Post-Validation_Excels")
         save_dir.mkdir(parents=True, exist_ok=True)
 
         # File name pattern: Customer_Instance_#.xlsx
@@ -8785,7 +8796,7 @@ async def get_finance_menu_items():
     returns the json file content as is.
     """
     try:
-        menu_file_path = Path("Required_files/finance_menu_items.json")
+        menu_file_path = resource_path("Required_files/finance_menu_items.json")
         with open(menu_file_path, "r") as f:
             menu_items = json.load(f)
             final = {
@@ -8799,3 +8810,12 @@ async def get_finance_menu_items():
             status_code=500,
         )
     
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "Main:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=False,
+        log_level="info"
+    )
