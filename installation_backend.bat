@@ -56,6 +56,22 @@ IF %ERRORLEVEL% NEQ 0 (
     )
 )
 
+:: Enforce Python 3.11.x
+echo.
+echo [2.1] Verifying Python version...
+FOR /F "tokens=2 delims= " %%V IN ('python --version') DO SET PYVER=%%V
+echo Detected Python %PYVER%
+
+echo %PYVER% | findstr /R "^3\.11\." >nul
+IF %ERRORLEVEL% NEQ 0 (
+    echo ❌ Python 3.11.x is required. Found %PYVER%
+    echo Please install Python 3.11 and re-run this script.
+    pause
+    popd
+    exit /b
+)
+
+
 :: Step 3: Create virtual environment
 echo.
 echo [3] Creating new virtual environment...
@@ -78,21 +94,62 @@ IF %ERRORLEVEL% NEQ 0 (
     exit /b
 )
 
-:: Step 5: Install dependencies
+:: Upgrade pip inside venv
+echo.
+echo [4.1] Upgrading pip...
+venv\Scripts\python.exe -m pip install --upgrade pip
+
+:: Step 5: Install dependencies (clean + deterministic)
 echo.
 echo [5] Installing dependencies...
+
 IF EXIST requirements.txt (
     echo ✅ Found requirements.txt
-    venv\Scripts\python.exe -m pip install -r requirements.txt
 ) ELSE IF EXIST Requirements.txt (
-    echo ✅ Found Requirements.txt
-    venv\Scripts\python.exe -m pip install -r Requirements.txt
+    ren Requirements.txt requirements.txt
+    echo ✅ Renamed Requirements.txt → requirements.txt
 ) ELSE (
-    echo ❌ No requirements file found.
+    echo ❌ No requirements.txt found.
     pause
     popd
     exit /b
 )
+
+echo 🧹 Removing cached wheels...
+venv\Scripts\python.exe -m pip cache purge >nul 2>&1
+
+echo 📦 Installing pinned dependencies...
+venv\Scripts\python.exe -m pip install --no-cache-dir -r requirements.txt
+IF %ERRORLEVEL% NEQ 0 (
+    echo ❌ Dependency installation failed.
+    pause
+    popd
+    exit /b
+)
+
+:: Step 5.1: Verify critical package versions
+echo.
+echo [5.1] Verifying environment versions...
+
+venv\Scripts\python.exe - <<EOF
+import sys, pandas, numpy, openpyxl
+print("Python:", sys.version)
+print("pandas:", pandas.__version__)
+print("numpy:", numpy.__version__)
+print("openpyxl:", openpyxl.__version__)
+
+assert pandas.__version__ == "2.1.4", "❌ pandas version mismatch"
+assert openpyxl.__version__ == "3.1.2", "❌ openpyxl version mismatch"
+EOF
+
+IF %ERRORLEVEL% NEQ 0 (
+    echo ❌ Environment verification failed.
+    pause
+    popd
+    exit /b
+)
+
+echo ✅ Environment verified successfully.
 
 :: Step 6: Verify Main.py exists
 echo.
