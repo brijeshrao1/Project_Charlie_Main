@@ -1,7 +1,7 @@
-fastapi
 uvicorn
-pandas
-openpyxl
+pandas==2.1.*
+openpyxl==3.1.*
+fastapi==0.110.*
 python-calamine
 xlsxwriter
 pydantic

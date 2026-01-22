@@ -8157,9 +8157,14 @@ async def post_validation_excel(
         l_suffix_cols = [c + '_L' for c in cols_to_compare]
         o_suffix_cols = [c + '_O' for c in cols_to_compare]
         
-        with pd.option_context('future.no_silent_downcasting', True):
+        try:
+            with pd.option_context('future.no_silent_downcasting', True):
+                df_l = merged[l_suffix_cols].fillna("").astype(str)
+                df_o = merged[o_suffix_cols].fillna("").astype(str)
+        except Exception:
             df_l = merged[l_suffix_cols].fillna("").astype(str)
             df_o = merged[o_suffix_cols].fillna("").astype(str)
+
         
         df_l.columns = cols_to_compare
         df_o.columns = cols_to_compare
