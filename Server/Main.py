@@ -39,7 +39,7 @@ from openpyxl.styles import PatternFill, Border, Side, Font, Alignment
 from openpyxl.utils import get_column_letter
 import xml.etree.ElementTree as ET
 from openpyxl.worksheet.table import Table, TableStyleInfo 
-from datetime import datetime, timezone
+
 
 # Load environment variables
 load_dotenv()
@@ -52,10 +52,6 @@ app = FastAPI(
     description="API to transform and download Excel files.",
     version="1.0.0"
 )
-
-# datetime
-
-now_ts = datetime.now(timezone.utc)
 
 app.add_middleware(
     CORSMiddleware,
@@ -8037,43 +8033,20 @@ async def post_validation_excel(
         legacy_sheet_param = legacySheet if legacySheet and legacySheet.strip() else 0
         oracle_sheet_param = oracleSheet if oracleSheet and oracleSheet.strip() else 0
 
-        legacy_bytes = await legacyFile.read()
-        oracle_bytes = await oracleFile.read()
-
         legacy_df = pd.read_excel(
-            io.BytesIO(legacy_bytes),
+            io.BytesIO(await legacyFile.read()), 
             sheet_name=legacy_sheet_param,
             dtype=object
         )
-
+        
         oracle_df = pd.read_excel(
-            io.BytesIO(oracle_bytes),
+            io.BytesIO(await oracleFile.read()), 
             sheet_name=oracle_sheet_param,
             dtype=object
         )
 
-
         legacy_df.columns = legacy_df.columns.astype(str).str.strip()
         oracle_df.columns = oracle_df.columns.astype(str).str.strip()
-
-        # --- [2.1] Align Oracle columns to Legacy column space ---
-        oracle_to_legacy_map = {v: k for k, v in mappings_dict.items()}
-
-        cols_to_rename = {
-            col: oracle_to_legacy_map[col]
-            for col in oracle_df.columns
-            if col in oracle_to_legacy_map
-        }
-
-        oracle_renamed = oracle_df.rename(columns=cols_to_rename)
-
-        missing_keys = [k for k in key_cols_list if k not in oracle_renamed.columns]
-        if missing_keys:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Key columns missing in Oracle after rename: {missing_keys}"
-            )
-
 
         if legacy_df.shape[1] > 450:
             raise HTTPException(
@@ -8091,7 +8064,7 @@ async def post_validation_excel(
         missing = []
         for l, o in mappings_dict.items():
             if l not in legacy_df.columns: missing.append(f"PeopleSoft column '{l}' not found in sheet '{legacy_sheet_param}'")
-            if l not in oracle_renamed.columns: missing.append(f"Oracle Cloud column '{o}' not found in sheet '{oracle_sheet_param}'")
+            if o not in oracle_df.columns: missing.append(f"Oracle Cloud column '{o}' not found in sheet '{oracle_sheet_param}'")
         
         if missing:
             raise HTTPException(status_code=400, detail={"errors": missing})
@@ -8099,16 +8072,14 @@ async def post_validation_excel(
         # --- [3. Vectorized Date Normalization] ---
         logger.info("Normalizing dates...")
         legacy_df = fast_normalize_dates(legacy_df, legacy_date_cols)
-        oracle_renamed = fast_normalize_dates(oracle_renamed, target_date_cols)
+        oracle_df = fast_normalize_dates(oracle_df, target_date_cols)
 
         # --- [4. Vectorized Key Generation] ---
         logger.info("Generating keys...")
         legacy_df[INTERNAL_KEY] = fast_generate_key(legacy_df, key_cols_list)
         
-        oracle_renamed[INTERNAL_KEY] = fast_generate_key(
-            oracle_renamed,
-            key_cols_list
-        )
+        oracle_key_cols = [mappings_dict.get(k, k) for k in key_cols_list]
+        oracle_df[INTERNAL_KEY] = fast_generate_key(oracle_df, oracle_key_cols)
 
         # --- [5. Comparison Logic] ---
         logger.info("Comparing data...")
@@ -8149,6 +8120,9 @@ async def post_validation_excel(
 
 
         
+        oracle_to_legacy_map = {v: k for k, v in mappings_dict.items()}
+        cols_to_rename = {col: oracle_to_legacy_map[col] for col in oracle_df.columns if col in oracle_to_legacy_map}
+        oracle_renamed = oracle_df.rename(columns=cols_to_rename)
 
         cols_to_compare = list(mappings_dict.keys())
         cols_to_compare = [c for c in cols_to_compare if c in legacy_df.columns and c in oracle_renamed.columns]
@@ -8165,10 +8139,9 @@ async def post_validation_excel(
         l_suffix_cols = [c + '_L' for c in cols_to_compare]
         o_suffix_cols = [c + '_O' for c in cols_to_compare]
         
-        with pd.option_context("mode.copy_on_write", True):
+        with pd.option_context('future.no_silent_downcasting', True):
             df_l = merged[l_suffix_cols].fillna("").astype(str)
             df_o = merged[o_suffix_cols].fillna("").astype(str)
-
         
         df_l.columns = cols_to_compare
         df_o.columns = cols_to_compare
@@ -8270,13 +8243,11 @@ async def post_validation_excel(
         common_keys = merged.index
         
         legacy_only_df = legacy_df[~legacy_df[INTERNAL_KEY].isin(common_keys)].copy()
-        oracle_only_df = oracle_renamed[~oracle_renamed[INTERNAL_KEY].isin(common_keys)].copy()
-
+        oracle_only_df = oracle_df[~oracle_df[INTERNAL_KEY].isin(common_keys)].copy()
         
         if INTERNAL_KEY in legacy_only_df.columns: legacy_only_df.drop(columns=[INTERNAL_KEY], inplace=True)
         if INTERNAL_KEY in oracle_only_df.columns: oracle_only_df.drop(columns=[INTERNAL_KEY], inplace=True)
-        if INTERNAL_KEY in oracle_only_df.columns:
-            oracle_only_df.drop(columns=[INTERNAL_KEY], inplace=True)
+
         # --- [NEW] Add Comment Columns to Missing Record DFs ---
         for col in comment_cols:
             legacy_only_df[col] = ""
@@ -8298,19 +8269,14 @@ async def post_validation_excel(
         ps_missing_df = pd.DataFrame(ps_missing_rows)
 
         oc_missing_rows = []
-
         for _, row in oracle_only_df.iterrows():
             record = {}
-
             for col in cols_to_compare:
                 record[f"{col}_L"] = ""
-                record[f"{col}_O"] = row[col]  # ✅ now exists
-
+                record[f"{col}_O"] = row.get(col, "")
             record["Record Status"] = "MISSING_IN_PEOPLESOFT"
             oc_missing_rows.append(record)
-
         oc_missing_df = pd.DataFrame(oc_missing_rows)
-
 
         final_full_df = None
 
@@ -8399,8 +8365,8 @@ async def post_validation_excel(
             ["", "PeopleSoft File Name", legacyFile.filename, "", "", ""],
             ["", "PeopleSoft Records Count", len(legacy_df), "", "", ""],
             ["", "Oracle Cloud File Name", oracleFile.filename, "", "", ""],
-            ["", "Oracle Cloud Records Count", len(oracle_renamed), "", "", ""],
-            ["", "Validation DateTime", now_ts.strftime("%Y-%m-%d %H:%M:%S"), "", "", ""],
+            ["", "Oracle Cloud Records Count", len(oracle_df), "", "", ""],
+            ["", "Validation DateTime", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "", "", ""],
             ["", "", "", "", "", ""],
 
             ["", "Missing Records Summary", "", "Mythics Comments", "Oracle Comments", "ParkView Comments"],
@@ -8553,8 +8519,9 @@ async def post_validation_excel(
                         for col_idx in comment_col_indices:
                             # Iterate cells in this column starting from row 2
                             # Using iter_cols for just this column is cleaner
-                            for row in ws.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx):
-                                row[0].border = border_thin
+                            for col_cells in ws.iter_cols(min_col=col_idx, max_col=col_idx, min_row=2, max_row=ws.max_row):
+                                for cell in col_cells:
+                                    cell.border = border_thin
 
             # Apply Styles to Data Sheets
             style_sheet_header(main_workbook, sheet_missing_ps, fill_header_ps)
@@ -8635,9 +8602,8 @@ async def post_validation_excel(
 
         logger.info(f"Process completed in {time.time() - start_time:.2f} seconds.")
 
-        def _clean(path: str) -> None:
-            try:
-                shutil.rmtree(path, ignore_errors=True)
+        def _clean(path):
+            try: shutil.rmtree(path, ignore_errors=True)
             except: pass
 
         background_tasks.add_task(_clean, temp_dir)
