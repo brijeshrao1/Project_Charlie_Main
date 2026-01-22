@@ -8006,6 +8006,7 @@ async def post_validation_excel(
     1. Comment columns styled Orange with Borders.
     2. ROBUST String comparison (ignores 100 vs 100.0 differences).
     3. Consistent Excel Engine usage.
+    4. PRE-NORMALIZES Key Columns to ensure correct row merging across systems.
     """
     logger.info("Starting optimized validation process with robust comparison...")
     start_time = time.time()
@@ -8084,6 +8085,26 @@ async def post_validation_excel(
         if missing:
             raise HTTPException(status_code=400, detail={"errors": missing})
 
+        # --- [CRITICAL FIX] Normalize Key Columns BEFORE Key Generation ---
+        # This ensures that if one system reads '123' and another reads '123.0', they both become '123'
+        # BEFORE they are used to join the data.
+        def normalize_key_columns(df, key_cols):
+            for col in key_cols:
+                if col in df.columns:
+                    df[col] = (
+                        df[col]
+                        .astype(str)
+                        .str.strip()
+                        .str.replace(r'\.0+$', '', regex=True) # Strip .0, .00
+                        .replace('nan', np.nan) # Handle string 'nan' if any
+                        .fillna('') # Convert nan back to empty string for consistent key gen
+                    )
+            return df
+
+        logger.info("Normalizing Key Columns...")
+        legacy_df = normalize_key_columns(legacy_df, key_cols_list)
+        oracle_renamed = normalize_key_columns(oracle_renamed, key_cols_list)
+
         # --- [3. Vectorized Date Normalization] ---
         logger.info("Normalizing dates...")
         legacy_df = fast_normalize_dates(legacy_df, legacy_date_cols)
@@ -8133,13 +8154,17 @@ async def post_validation_excel(
         def clean_string_for_compare(series):
             """
             Normalizes strings to avoid 100 vs 100.0 issues and handles whitespace/newlines.
+            Also strips commas to handle '1,000' vs '1000' in string fields.
             """
             return (
                 series
                 .astype(str)
                 .str.strip()
                 .str.replace(r'\r\n|\r|\n', ' ', regex=True) # Normalize newlines
-                .str.replace(r'\.0$', '', regex=True)        # Remove trailing .0 (100.0 -> 100)
+                .str.replace(',', '', regex=False)           # Remove commas (1,000 -> 1000)
+                .str.replace(r'\.0+$', '', regex=True)       # Remove .0, .00, .000 (100.00 -> 100)
+                .replace('nan', '')                          # Handle literal 'nan' strings
+                .replace('None', '')                         # Handle literal 'None' strings
             )
 
         cols_to_compare = list(mappings_dict.keys())
@@ -8536,6 +8561,7 @@ async def post_validation_excel(
     except Exception as e:
         logger.error(f"Processing Error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @app.post("/get-sheets")
