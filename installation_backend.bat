@@ -110,20 +110,52 @@ echo ✅ Python 3.11.x enforced successfully.
 :PYTHON_OK
 
 
-:: Enforce Python 3.11.x
+:: Step 2.1: Force Python 3.11.5 installation if not present
 echo.
-echo [2.1] Verifying Python version...
-FOR /F "tokens=2 delims= " %%V IN ('python --version') DO SET PYVER=%%V
-echo Detected Python %PYVER%
+echo [2.1] Ensuring Python 3.11.5 is installed...
 
-echo %PYVER% | findstr /R "^3\.11\." >nul
-IF %ERRORLEVEL% NEQ 0 (
-    echo ❌ Python 3.11.x is required. Found %PYVER%
-    echo Please install Python 3.11 and re-run this script.
-    pause
-    popd
-    exit /b
+set NEED_INSTALL=1
+
+python --version >nul 2>&1
+IF %ERRORLEVEL% EQU 0 (
+    FOR /F "tokens=2 delims= " %%V IN ('python --version') DO SET PYVER=%%V
+    echo Detected Python %PYVER%
+    echo %PYVER% | findstr /R "^3\.11\." >nul
+    IF %ERRORLEVEL% EQU 0 (
+        echo ✅ Python 3.11.x already installed.
+        set NEED_INSTALL=0
+    )
 )
+
+IF %NEED_INSTALL% EQU 0 GOTO PY_READY
+
+echo ⚠️ Python 3.11.x not found. Installing Python 3.11.5 automatically...
+
+:: --- Remove Windows Store Python aliases (critical) ---
+powershell -Command "Get-AppxPackage *Python* | Remove-AppxPackage -AllUsers" >nul 2>&1
+
+:: --- Download installer ---
+echo 📥 Downloading Python 3.11.5...
+powershell -Command ^
+"Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.5/python-3.11.5-amd64.exe' -OutFile 'python-3.11.5.exe'"
+
+:: --- Silent install ---
+echo 🔧 Installing Python 3.11.5...
+start /wait python-3.11.5.exe ^
+/quiet ^
+InstallAllUsers=1 ^
+PrependPath=1 ^
+Include_test=0 ^
+SimpleInstall=1
+
+del python-3.11.5.exe
+
+echo 🔁 Restarting script to refresh PATH...
+start "" "%~f0"
+exit /b
+
+:PY_READY
+echo ✅ Python 3.11.x is ready.
 
 
 :: Step 3: Create virtual environment
@@ -185,25 +217,27 @@ IF %ERRORLEVEL% NEQ 0 (
 echo.
 echo [5.1] Verifying environment versions...
 
-venv\Scripts\python.exe - <<EOF
-import sys, pandas, numpy, openpyxl
-print("Python:", sys.version)
-print("pandas:", pandas.__version__)
-print("numpy:", numpy.__version__)
-print("openpyxl:", openpyxl.__version__)
+echo import sys > verify_env.py
+echo import pandas, numpy, openpyxl >> verify_env.py
+echo print("Python:", sys.version) >> verify_env.py
+echo print("pandas:", pandas.__version__) >> verify_env.py
+echo print("numpy:", numpy.__version__) >> verify_env.py
+echo print("openpyxl:", openpyxl.__version__) >> verify_env.py
+echo assert pandas.__version__ == "2.1.4" >> verify_env.py
+echo assert openpyxl.__version__ == "3.1.2" >> verify_env.py
 
-assert pandas.__version__ == "2.1.4", "❌ pandas version mismatch"
-assert openpyxl.__version__ == "3.1.2", "❌ openpyxl version mismatch"
-EOF
-
+venv\Scripts\python.exe verify_env.py
 IF %ERRORLEVEL% NEQ 0 (
     echo ❌ Environment verification failed.
+    del verify_env.py
     pause
     popd
     exit /b
 )
 
+del verify_env.py
 echo ✅ Environment verified successfully.
+
 
 :: Step 6: Verify Main.py exists
 echo.
