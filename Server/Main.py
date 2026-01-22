@@ -8228,15 +8228,15 @@ async def post_validation_excel(
             validation_df = pd.DataFrame([{"Status": "All mapped columns matched perfectly"}])
         
         # --- SORT Data Discrepancies BEFORE pagination ---
-        if "Column Name" in validation_df.columns and not validation_df.empty:
-            sort_cols = ["Column Name"] + [
-                c for c in key_cols_list if c in validation_df.columns
-            ]
+        # if "Column Name" in validation_df.columns and not validation_df.empty:
+        #     sort_cols = ["Column Name"] + [
+        #         c for c in key_cols_list if c in validation_df.columns
+        #     ]
 
-            validation_df = validation_df.sort_values(
-                by=sort_cols,
-                kind="mergesort"  # stable sort (important!)
-            ).reset_index(drop=True)
+        #     validation_df = validation_df.sort_values(
+        #         by=sort_cols,
+        #         kind="mergesort"  # stable sort (important!)
+        #     ).reset_index(drop=True)
 
         # --- [NEW] Add Comment Columns to Discrepancies ---
         comment_cols = ["Mythics Comments", "Oracle Comments", "ParkView Comments"]
