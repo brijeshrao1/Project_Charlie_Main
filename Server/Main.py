@@ -8002,9 +8002,12 @@ async def post_validation_excel(
 ):
     """
     OPTIMIZED Post-validation endpoint with FAST STYLING.
-    Fixes: Comment columns (Mythics, Oracle, ParkView) are now styled Orange with Borders in ALL relevant tabs.
+    Fixes: 
+    1. Comment columns styled Orange with Borders.
+    2. ROBUST String comparison (ignores 100 vs 100.0 differences).
+    3. Consistent Excel Engine usage.
     """
-    logger.info("Starting optimized validation process with fast styling...")
+    logger.info("Starting optimized validation process with robust comparison...")
     start_time = time.time()
 
     temp_dir = tempfile.mkdtemp()
@@ -8028,6 +8031,7 @@ async def post_validation_excel(
         if not key_cols_list: raise ValueError("Key columns list is empty")
 
         # --- [2. Read DataFrames] ---
+        # FIX: Enforce engine='openpyxl' for consistency across OS
         logger.info(f"Reading Excel files... Legacy Sheet: {legacySheet}, Oracle Sheet: {oracleSheet}")
         
         legacy_sheet_param = legacySheet if legacySheet and legacySheet.strip() else 0
@@ -8036,13 +8040,15 @@ async def post_validation_excel(
         legacy_df = pd.read_excel(
             io.BytesIO(await legacyFile.read()), 
             sheet_name=legacy_sheet_param,
-            dtype=object
+            dtype=object,
+            engine='openpyxl' 
         )
         
         oracle_df = pd.read_excel(
             io.BytesIO(await oracleFile.read()), 
             sheet_name=oracle_sheet_param,
-            dtype=object
+            dtype=object,
+            engine='openpyxl'
         )
 
         legacy_df.columns = legacy_df.columns.astype(str).str.strip()
@@ -8066,18 +8072,8 @@ async def post_validation_excel(
                 detail=f"Key columns missing in Oracle after rename: {missing_keys}"
             )
 
-
-        if legacy_df.shape[1] > 450:
-            raise HTTPException(
-                status_code=400,
-                detail=f"PeopleSoft file has {legacy_df.shape[1]} columns. Max allowed is 450."
-            )
-
-        if oracle_df.shape[1] > 450:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Oracle Cloud file has {oracle_df.shape[1]} columns. Max allowed is 450."
-            )
+        if legacy_df.shape[1] > 450 or oracle_df.shape[1] > 450:
+             raise HTTPException(status_code=400, detail="File has too many columns. Max allowed is 450.")
 
         # Validate columns existence
         missing = []
@@ -8104,9 +8100,9 @@ async def post_validation_excel(
 
         # --- [5. Comparison Logic] ---
         logger.info("Comparing data...")
+        
         def detect_numeric_columns(df, threshold=0.8):
             numeric_cols = set()
-
             for col in df.columns:
                 series = (
                     df[col]
@@ -8115,17 +8111,12 @@ async def post_validation_excel(
                     .str.replace(',', '', regex=False)
                     .str.strip()
                 )
-
                 numeric_ratio = pd.to_numeric(series, errors='coerce').notna().mean()
-
-                # Reject columns with frequent hyphenated values
                 hyphen_ratio = series.str.contains('-', regex=False).mean()
 
                 if numeric_ratio >= threshold and hyphen_ratio < 0.2:
                     numeric_cols.add(col)
-
             return numeric_cols
-
 
         def normalize_numeric_series(series):
             cleaned = (
@@ -8136,11 +8127,20 @@ async def post_validation_excel(
                 .str.strip()
                 .replace('', None)
             )
-
             return pd.to_numeric(cleaned, errors='coerce').round(4)
-
-
         
+        # --- NEW HELPER: Robust String Cleaner ---
+        def clean_string_for_compare(series):
+            """
+            Normalizes strings to avoid 100 vs 100.0 issues and handles whitespace/newlines.
+            """
+            return (
+                series
+                .astype(str)
+                .str.strip()
+                .str.replace(r'\r\n|\r|\n', ' ', regex=True) # Normalize newlines
+                .str.replace(r'\.0$', '', regex=True)        # Remove trailing .0 (100.0 -> 100)
+            )
 
         cols_to_compare = list(mappings_dict.keys())
         cols_to_compare = [c for c in cols_to_compare if c in legacy_df.columns and c in oracle_renamed.columns]
@@ -8157,14 +8157,15 @@ async def post_validation_excel(
         l_suffix_cols = [c + '_L' for c in cols_to_compare]
         o_suffix_cols = [c + '_O' for c in cols_to_compare]
         
+        # Safe downcasting check for newer pandas versions
         try:
             with pd.option_context('future.no_silent_downcasting', True):
                 df_l = merged[l_suffix_cols].fillna("").astype(str)
                 df_o = merged[o_suffix_cols].fillna("").astype(str)
         except Exception:
+            # Fallback for older pandas versions
             df_l = merged[l_suffix_cols].fillna("").astype(str)
             df_o = merged[o_suffix_cols].fillna("").astype(str)
-
         
         df_l.columns = cols_to_compare
         df_o.columns = cols_to_compare
@@ -8177,12 +8178,12 @@ async def post_validation_excel(
 
         logger.info(f"Dynamically detected numeric columns: {numeric_columns}")
 
-
         # Boolean mask of differences
         diff_mask = pd.DataFrame(False, index=df_l.index, columns=df_l.columns)
 
         for col in cols_to_compare:
             if col in numeric_columns:
+                # Numeric Comparison
                 l_num = normalize_numeric_series(df_l[col])
                 o_num = normalize_numeric_series(df_o[col])
 
@@ -8191,14 +8192,12 @@ async def post_validation_excel(
                             |
                             (l_num.isna() ^ o_num.isna())
                         )
-
             else:
-                diff_mask[col] = (
-                    df_l[col].astype(str).str.strip()
-                    !=
-                    df_o[col].astype(str).str.strip()
-                )
-
+                # String Comparison (Updated with cleaning)
+                l_str = clean_string_for_compare(df_l[col])
+                o_str = clean_string_for_compare(df_o[col])
+                
+                diff_mask[col] = (l_str != o_str)
 
         # --- [6. Extract Discrepancies] ---
         if diff_mask.any().any():
@@ -8233,15 +8232,14 @@ async def post_validation_excel(
             validation_df = pd.DataFrame([{"Status": "All mapped columns matched perfectly"}])
         
         # --- SORT Data Discrepancies BEFORE pagination ---
-        # if "Column Name" in validation_df.columns and not validation_df.empty:
-        #     sort_cols = ["Column Name"] + [
-        #         c for c in key_cols_list if c in validation_df.columns
-        #     ]
-
-        #     validation_df = validation_df.sort_values(
-        #         by=sort_cols,
-        #         kind="mergesort"  # stable sort (important!)
-        #     ).reset_index(drop=True)
+        if "Column Name" in validation_df.columns and not validation_df.empty:
+            sort_cols = ["Column Name"] + [
+                c for c in key_cols_list if c in validation_df.columns
+            ]
+            validation_df = validation_df.sort_values(
+                by=sort_cols,
+                kind="mergesort"
+            ).reset_index(drop=True)
 
         # --- [NEW] Add Comment Columns to Discrepancies ---
         comment_cols = ["Mythics Comments", "Oracle Comments", "ParkView Comments"]
@@ -8257,9 +8255,7 @@ async def post_validation_excel(
                 .value_counts()
                 .sort_values(ascending=False)
             )
-
             for col_name, count in col_counts.items():
-                # Format for summary: ["", Name, Count, Comments...]
                 column_discrepancy_counts.append(["", col_name, int(count), "", "", ""])
 
         # --- [7. Missing Records] ---
@@ -8267,12 +8263,10 @@ async def post_validation_excel(
         
         legacy_only_df = legacy_df[~legacy_df[INTERNAL_KEY].isin(common_keys)].copy()
         oracle_only_df = oracle_renamed[~oracle_renamed[INTERNAL_KEY].isin(common_keys)].copy()
-
         
         if INTERNAL_KEY in legacy_only_df.columns: legacy_only_df.drop(columns=[INTERNAL_KEY], inplace=True)
         if INTERNAL_KEY in oracle_only_df.columns: oracle_only_df.drop(columns=[INTERNAL_KEY], inplace=True)
-        if INTERNAL_KEY in oracle_only_df.columns:
-            oracle_only_df.drop(columns=[INTERNAL_KEY], inplace=True)
+
         # --- [NEW] Add Comment Columns to Missing Record DFs ---
         for col in comment_cols:
             legacy_only_df[col] = ""
@@ -8294,27 +8288,16 @@ async def post_validation_excel(
         ps_missing_df = pd.DataFrame(ps_missing_rows)
 
         oc_missing_rows = []
-
         for _, row in oracle_only_df.iterrows():
             record = {}
-
             for col in cols_to_compare:
                 record[f"{col}_L"] = ""
-                record[f"{col}_O"] = row[col]  # ✅ now exists
-
+                record[f"{col}_O"] = row[col]
             record["Record Status"] = "MISSING_IN_PEOPLESOFT"
             oc_missing_rows.append(record)
-
         oc_missing_df = pd.DataFrame(oc_missing_rows)
 
-
-        final_full_df = None
-
-        # ALWAYS build Source–Target dataset
-        final_full_df = pd.concat(
-            [matched_df, ps_missing_df, oc_missing_df],
-            ignore_index=True
-        )
+        final_full_df = pd.concat([matched_df, ps_missing_df, oc_missing_df], ignore_index=True)
 
         # --- SORT Full Data BEFORE pagination ---
         final_full_df["__order__"] = final_full_df["Record Status"].map({
@@ -8323,66 +8306,13 @@ async def post_validation_excel(
             "MISSING_IN_PEOPLESOFT": 2
         })
 
-        # Sort using PeopleSoft-side key columns, in order
-        ps_key_cols = [
-            f"{k}_L" for k in key_cols_list
-            if f"{k}_L" in final_full_df.columns
-        ]
-
+        ps_key_cols = [f"{k}_L" for k in key_cols_list if f"{k}_L" in final_full_df.columns]
         final_full_df = (
             final_full_df
-            .sort_values(
-                by=["__order__"] + ps_key_cols,
-                kind="mergesort"   # stable + Excel-friendly
-            )
+            .sort_values(by=["__order__"] + ps_key_cols, kind="mergesort")
             .drop(columns="__order__")
             .reset_index(drop=True)
         )
-
-        
-
-
-
-        EXCEL_MAX_ROWS = 900_000   # stay safe
-        def split_dataframe_by_rows(df, max_rows):
-            for start in range(0, len(df), max_rows):
-                yield df.iloc[start:start + max_rows]
-
-        def style_full_data_header_only(ws, num_comparison_cols):
-            """
-            Styles the header row of Full Data sheets with appropriate colors.
-            Left half (PeopleSoft) uses blue, right half (Oracle) uses teal.
-            """
-            font_white = Font(name="Calibri", size=9, color="FFFFFF", bold=True)
-            fill_header_ps = PatternFill("solid", fgColor="1F497D")
-            fill_header_oc = PatternFill("solid", fgColor="31869B")
-            border_thin = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-            align_center = Alignment(horizontal="center", vertical="center")
-            
-            ws.freeze_panes = "A2"
-            
-            for cell in ws[1]:
-                cell.font = font_white
-                cell.alignment = align_center
-                cell.border = border_thin
-                
-                # Left half (PeopleSoft) - blue
-                if cell.column <= num_comparison_cols:
-                    cell.fill = fill_header_ps
-                # Right half (Oracle) - teal
-                else:
-                    cell.fill = fill_header_oc
-            
-            # Auto-width columns
-            for col in ws.iter_cols(max_row=50):
-                max_length = 0
-                col_letter = get_column_letter(col[0].column)
-                if col[0].value:
-                    max_length = len(str(col[0].value))
-                for cell in col[1:]:
-                    if cell.value:
-                        max_length = max(max_length, len(str(cell.value)))
-                ws.column_dimensions[col_letter].width = min(max((max_length + 2) * 1.2, 10), 60)
 
         # --- [9. Generate Summary] ---
         total_discrepancies = len(validation_df) if "Status" not in validation_df.columns else 0
@@ -8428,184 +8358,132 @@ async def post_validation_excel(
         enforce_sheet_column_limit(legacy_only_df, "Missing in Oracle Cloud")
         enforce_sheet_column_limit(oracle_only_df, "Missing in PeopleSoft")
 
+        # Define Styling Functions (same as before but included for completeness)
+        font_white = Font(name="Calibri", size=9, color="FFFFFF", bold=True)
+        font_black = Font(name="Calibri", size=9, color="000000", bold=True)
+        font_bold_black = Font(name="Calibri", size=9, bold=True)
+        fill_header_ps = PatternFill("solid", fgColor="1F497D")
+        fill_header_oc = PatternFill("solid", fgColor="31869B")
+        fill_header_err = PatternFill("solid", fgColor="C0504D")
+        fill_green = PatternFill("solid", fgColor="00B050")
+        fill_grey = PatternFill("solid", fgColor="D9D9D9")
+        fill_orange = PatternFill("solid", fgColor="FF9900")
+        border_thin = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+        align_center = Alignment(horizontal="center", vertical="center")
+
+        def style_full_data_header_only(ws, num_comparison_cols):
+            ws.freeze_panes = "A2"
+            for cell in ws[1]:
+                cell.font = font_white
+                cell.alignment = align_center
+                cell.border = border_thin
+                if cell.column <= num_comparison_cols:
+                    cell.fill = fill_header_ps
+                else:
+                    cell.fill = fill_header_oc
+            for col in ws.iter_cols(max_row=50):
+                max_length = 0
+                col_letter = get_column_letter(col[0].column)
+                if col[0].value: max_length = len(str(col[0].value))
+                for cell in col[1:]:
+                    if cell.value: max_length = max(max_length, len(str(cell.value)))
+                ws.column_dimensions[col_letter].width = min(max((max_length + 2) * 1.2, 10), 60)
+
+        def style_sheet_header(workbook, sheet_name, fill_color):
+            if sheet_name in workbook.sheetnames:
+                ws = workbook[sheet_name]
+                ws.freeze_panes = "A2"
+                comment_col_indices = []
+                for cell in ws[1]:
+                    cell.fill = fill_color
+                    cell.font = font_white
+                    cell.alignment = align_center
+                    cell.border = border_thin
+                    if cell.value in comment_cols:
+                        cell.fill = fill_orange
+                        cell.font = font_black
+                        comment_col_indices.append(cell.column)
+                for col in ws.iter_cols(max_row=50):
+                    max_length = 0
+                    col_letter = get_column_letter(col[0].column)
+                    if col[0].value: max_length = len(str(col[0].value))
+                    for cell in col[1:]:
+                        if cell.value: max_length = max(max_length, len(str(cell.value)))
+                    ws.column_dimensions[col_letter].width = min(max((max_length + 2) * 1.2, 10), 60)
+                if comment_col_indices:
+                    for col_idx in comment_col_indices:
+                        for col_cells in ws.iter_cols(min_col=col_idx, max_col=col_idx, min_row=2, max_row=ws.max_row):
+                            for cell in col_cells:
+                                cell.border = border_thin
+
+        # Generate Files
         if not includeSourceTargetFiles:
             with pd.ExcelWriter(source_target_output_path, engine="openpyxl") as st_writer:
-                write_df_excel_paginated(
-                    st_writer,
-                    final_full_df,
-                    sheet_full_data
-                )
-
+                write_df_excel_paginated(st_writer, final_full_df, sheet_full_data)
                 st_workbook = st_writer.book
                 for sheet in st_workbook.sheetnames:
                     if sheet.startswith(sheet_full_data):
-                        style_full_data_header_only(
-                            st_workbook[sheet],
-                            len(cols_to_compare)
-                        )
+                        style_full_data_header_only(st_workbook[sheet], len(cols_to_compare))
 
         with pd.ExcelWriter(main_output_path, engine="openpyxl") as main_writer:
             summary_df.to_excel(main_writer, index=False, header=False, sheet_name="Summary")
             oracle_only_df.to_excel(main_writer, index=False, sheet_name=sheet_missing_ps)
             legacy_only_df.to_excel(main_writer, index=False, sheet_name=sheet_missing_oc)
-
-            write_df_excel_paginated(
-                main_writer,
-                validation_df,
-                sheet_discrepancies
-            )
-
+            write_df_excel_paginated(main_writer, validation_df, sheet_discrepancies)
+            
             main_workbook = main_writer.book
             if includeSourceTargetFiles:
-                write_df_excel_paginated(
-                    main_writer,
-                    final_full_df,
-                    sheet_full_data
-                )
-
-
+                write_df_excel_paginated(main_writer, final_full_df, sheet_full_data)
+            
             if final_full_df is not None:
-                with pd.ExcelWriter(source_target_output_path, engine="openpyxl") as st_writer:
-                    write_df_excel_paginated(
-                        st_writer,
-                        final_full_df,
-                        sheet_full_data
-                    )
-
+                 with pd.ExcelWriter(source_target_output_path, engine="openpyxl") as st_writer:
+                    write_df_excel_paginated(st_writer, final_full_df, sheet_full_data)
                     st_workbook = st_writer.book
-
-                    # Style headers for each paginated sheet
                     for sheet in st_workbook.sheetnames:
                         if sheet.startswith(sheet_full_data):
-                            style_full_data_header_only(
-                                st_workbook[sheet],
-                                len(cols_to_compare)
-                            )
-
-
-
+                            style_full_data_header_only(st_workbook[sheet], len(cols_to_compare))
+                            
             if includeSourceTargetFiles and final_full_df is not None:
-                logger.info("Writing Source-Target data...")
+                 write_df_excel_paginated(st_writer, final_full_df, sheet_full_data)
 
-                write_df_excel_paginated(
-                    st_writer,
-                    final_full_df,
-                    sheet_full_data
-                )
-
-            
-            # --- Styles Definitions ---
-            font_white = Font(name="Calibri", size=9, color="FFFFFF", bold=True)
-            font_black = Font(name="Calibri", size=9, color="000000", bold=True)
-            font_bold_black = Font(name="Calibri", size=9, bold=True)
-            
-            fill_header_ps = PatternFill("solid", fgColor="1F497D")
-            fill_header_oc = PatternFill("solid", fgColor="31869B")
-            fill_header_err = PatternFill("solid", fgColor="C0504D")
-            fill_green = PatternFill("solid", fgColor="00B050")
-            fill_grey = PatternFill("solid", fgColor="D9D9D9")
-            fill_orange = PatternFill("solid", fgColor="FF9900")
-            
-            border_thin = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-            align_center = Alignment(horizontal="center", vertical="center")
-            
-
-  
-            # --- Updated Helper: Style Sheet Header ---
-            def style_sheet_header(workbook, sheet_name, fill_color):
-                if sheet_name in workbook.sheetnames:
-                    ws = workbook[sheet_name]
-                    ws.freeze_panes = "A2"
-                    
-                    # Track comment column indices for border styling later
-                    comment_col_indices = []
-
-                    # Style Headers
-                    for cell in ws[1]:
-                        # Default Style
-                        cell.fill = fill_color
-                        cell.font = font_white
-                        cell.alignment = align_center
-                        cell.border = border_thin
-                        
-                        # OVERRIDE: Check for Comment Columns
-                        if cell.value in comment_cols:
-                            cell.fill = fill_orange
-                            cell.font = font_black
-                            comment_col_indices.append(cell.column)
-                    
-                    # Auto-width
-                    for col in ws.iter_cols(max_row=50):
-                        max_length = 0
-                        col_letter = get_column_letter(col[0].column)
-                        if col[0].value: max_length = len(str(col[0].value))
-                        for cell in col[1:]:
-                            if cell.value: max_length = max(max_length, len(str(cell.value)))
-                        ws.column_dimensions[col_letter].width = min(max((max_length + 2) * 1.2, 10), 60)
-                    
-                    # Style Data Cells for Comment Columns (Apply Borders)
-                    # Optimization: Only iterate the specific columns
-                    if comment_col_indices:
-                        for col_idx in comment_col_indices:
-                            # Iterate cells in this column starting from row 2
-                            # Using iter_cols for just this column is cleaner
-                            for col_cells in ws.iter_cols(min_col=col_idx, max_col=col_idx, min_row=2, max_row=ws.max_row):
-                                for cell in col_cells:
-                                    cell.border = border_thin
-
-            # Apply Styles to Data Sheets
+            # Apply Styles
             style_sheet_header(main_workbook, sheet_missing_ps, fill_header_ps)
             style_sheet_header(main_workbook, sheet_missing_oc, fill_header_oc)
-
             for sheet in main_workbook.sheetnames:
                 if sheet.startswith(sheet_discrepancies):
                     style_sheet_header(main_workbook, sheet, fill_header_err)
             
-            # --- Full Data Styling ---
             if includeSourceTargetFiles:
                 for sheet_name in main_workbook.sheetnames:
                     if sheet_name.startswith(sheet_full_data):
-                        ws = main_workbook[sheet_name]
-                        logger.info(f"Styling Source-Target sheet: {sheet_name}")
-                        style_full_data_header_only(ws, len(cols_to_compare))
+                        style_full_data_header_only(main_workbook[sheet_name], len(cols_to_compare))
 
-            # --- Summary Styling ---
+            # Summary Styling
             ws_sum = main_workbook["Summary"]
             ws_sum.sheet_view.showGridLines = False
             ws_sum.column_dimensions['A'].width = 2
             ws_sum.column_dimensions['B'].width = 45
-            ws_sum.column_dimensions['C'].width = 25
-            ws_sum.column_dimensions['D'].width = 25
-            ws_sum.column_dimensions['E'].width = 25
-            ws_sum.column_dimensions['F'].width = 25
-
+            for c_char in ['C', 'D', 'E', 'F']: ws_sum.column_dimensions[c_char].width = 25
+            
             for row in ws_sum.iter_rows(min_row=1, max_row=ws_sum.max_row):
                 if len(row) < 3: continue
                 cell_b = row[1]
                 if not cell_b.value: continue
-                
                 cell_b.border = border_thin
                 row[2].border = border_thin
-                
-                # Get comment cells D, E, F
                 comment_cells = [ws_sum.cell(row=cell_b.row, column=c) for c in [4, 5, 6]]
-
-                # Section Headers
+                
                 if cell_b.value in ["Missing Records Summary", "Data Discrepancies Summary"]:
                     ws_sum.merge_cells(start_row=cell_b.row, start_column=2, end_row=cell_b.row, end_column=3)
                     cell_b.fill = fill_green
                     cell_b.font = font_white
                     cell_b.alignment = align_center
                     ws_sum.row_dimensions[cell_b.row].height = 20
-                    
-                    # Style Comment HEADERS (Orange)
                     for c in comment_cells:
                         c.fill = fill_orange
                         c.font = font_black
                         c.alignment = align_center
                         c.border = border_thin
-
-                # Totals
                 elif "Total" in str(cell_b.value) or "Comparison Statistics" in str(cell_b.value):
                     if "Comparison Statistics" in str(cell_b.value):
                          ws_sum.merge_cells(start_row=cell_b.row, start_column=2, end_row=cell_b.row, end_column=3)
@@ -8619,16 +8497,11 @@ async def post_validation_excel(
                         cell_b.font = font_bold_black
                         row[2].font = font_bold_black
                         row[2].alignment = align_center
-
-                # Data Rows
                 else:
                     cell_b.fill = fill_green
                     cell_b.font = font_white
                     row[2].alignment = align_center
-                    
-                    # Style Comment DATA cells (Border only)
-                    for c in comment_cells:
-                        c.border = border_thin
+                    for c in comment_cells: c.border = border_thin
 
         logger.info(f"Process completed in {time.time() - start_time:.2f} seconds.")
 
@@ -8637,41 +8510,32 @@ async def post_validation_excel(
             except: pass
 
         background_tasks.add_task(_clean, temp_dir)
-        report_filename = f"MythicsValidationResults_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-
         report_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
 
         if includeSourceTargetFiles:
-            # Merge behavior → return MAIN file only
-            logger.info("Returning MAIN file with embedded Source-Target data...")
             return FileResponse(
                 main_output_path,
                 filename=f"MythicsValidationResults_{report_ts}.xlsx",
                 media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-        # Else → ZIP BOTH files
         import zipfile
         with zipfile.ZipFile(zip_output_path, "w", zipfile.ZIP_DEFLATED) as zipf:
             zipf.write(main_output_path, arcname="PostValidation_Report.xlsx")
             if os.path.exists(source_target_output_path):
                 zipf.write(source_target_output_path, arcname="SourceTarget_Data.xlsx")
 
-        logger.info("Returning ZIP file with results...")
         return FileResponse(
             zip_output_path,
             filename=f"MythicsValidationResults_{report_ts}.zip",
             media_type="application/zip"
         )
 
-
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Processing Error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-
-
 
 
 @app.post("/get-sheets")
