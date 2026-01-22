@@ -8007,6 +8007,7 @@ async def post_validation_excel(
     2. ROBUST String comparison (ignores 100 vs 100.0 differences).
     3. Consistent Excel Engine usage.
     4. PRE-NORMALIZES Key Columns to ensure correct row merging across systems.
+    5. IMPROVED NUMERIC DETECTION for sparse columns (prevents false positive string mismatches).
     """
     logger.info("Starting optimized validation process with robust comparison...")
     start_time = time.time()
@@ -8123,17 +8124,34 @@ async def post_validation_excel(
         logger.info("Comparing data...")
         
         def detect_numeric_columns(df, threshold=0.8):
+            """
+            Detects numeric columns by checking the ratio of numeric values 
+            AMONG NON-EMPTY CELLS only. This fixes issues where sparse numeric 
+            columns were being treated as strings.
+            """
             numeric_cols = set()
             for col in df.columns:
-                series = (
-                    df[col]
-                    .astype(str)
+                series = df[col].astype(str).str.strip()
+                
+                # Filter to only non-empty values for the check
+                # This ensures sparse numeric columns are detected as numeric
+                non_empty = series[~series.isin(["", "nan", "None", "NaN"])]
+                
+                if len(non_empty) == 0:
+                    continue
+                
+                # Clean artifacts for the check
+                clean_check = (
+                    non_empty
                     .str.replace('%', '', regex=False)
                     .str.replace(',', '', regex=False)
-                    .str.strip()
                 )
-                numeric_ratio = pd.to_numeric(series, errors='coerce').notna().mean()
-                hyphen_ratio = series.str.contains('-', regex=False).mean()
+
+                numeric_count = pd.to_numeric(clean_check, errors='coerce').notna().sum()
+                numeric_ratio = numeric_count / len(non_empty)
+
+                # Reject columns with frequent hyphenated values (dates/SSNs)
+                hyphen_ratio = non_empty.str.contains('-', regex=False).mean()
 
                 if numeric_ratio >= threshold and hyphen_ratio < 0.2:
                     numeric_cols.add(col)
@@ -8159,8 +8177,8 @@ async def post_validation_excel(
             return (
                 series
                 .astype(str)
+                .str.replace(r'\s+', ' ', regex=True)        # Collapse multiple spaces/newlines/tabs to single space
                 .str.strip()
-                .str.replace(r'\r\n|\r|\n', ' ', regex=True) # Normalize newlines
                 .str.replace(',', '', regex=False)           # Remove commas (1,000 -> 1000)
                 .str.replace(r'\.0+$', '', regex=True)       # Remove .0, .00, .000 (100.00 -> 100)
                 .replace('nan', '')                          # Handle literal 'nan' strings
@@ -8546,9 +8564,9 @@ async def post_validation_excel(
 
         import zipfile
         with zipfile.ZipFile(zip_output_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            zipf.write(main_output_path, arcname="PostValidation_Report.xlsx")
+            zipf.write(main_output_path, arcname=f"MythicsValidationResults_{report_ts}.xlsx")
             if os.path.exists(source_target_output_path):
-                zipf.write(source_target_output_path, arcname="SourceTarget_Data.xlsx")
+                zipf.write(source_target_output_path, arcname=f"PeopleSoft_OracleCloud_data_{report_ts}.xlsx")
 
         return FileResponse(
             zip_output_path,
@@ -8561,7 +8579,6 @@ async def post_validation_excel(
     except Exception as e:
         logger.error(f"Processing Error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-
 
 
 @app.post("/get-sheets")
