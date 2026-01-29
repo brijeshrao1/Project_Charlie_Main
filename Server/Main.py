@@ -8026,6 +8026,36 @@ async def post_validation_excel(
         included_cols_list: List[str] = json.loads(includedColumns)
         key_cols_list: List[str] = json.loads(keyColumns)
         
+        # --- [1.1 Build Configuration DataFrame (New Tab Logic)] ---
+        # Reconstructs the UI table state based on the inputs received
+        config_rows = []
+        
+        # Combine date lists for easy lookup
+        legacy_date_list = json.loads(dateColumns) + json.loads(timestampColumns)
+        target_date_list = json.loads(dateColumnstarget) + json.loads(timestampColumnstarget)
+        legacy_date_set = set(legacy_date_list)
+        target_date_set = set(target_date_list)
+        
+        for source_col, target_col in mappings_dict.items():
+            is_key = source_col in key_cols_list
+            # Check if either source or target is marked as date
+            is_date = (source_col in legacy_date_set) or (target_col in target_date_set)
+            is_included = source_col in included_cols_list
+            
+            config_rows.append({
+                "Source Column": source_col,
+                "Target Column": target_col,
+                "Is Key?": "Yes" if is_key else "No",
+                "Is Date?": "Yes" if is_date else "No",
+                "Validate": "Yes", # Implicitly Yes since it is in the mappings dict
+                "Include in Report": "Yes" if is_included else "No"
+            })
+        
+        config_df = pd.DataFrame(config_rows)
+        # Enforce column limits on this new DF
+        if len(config_df.columns) > 0:
+             enforce_sheet_column_limit(config_df, "Configuration")
+
         legacy_date_cols = set(json.loads(dateColumns) + json.loads(timestampColumns))
         target_date_cols = set(json.loads(dateColumnstarget) + json.loads(timestampColumnstarget))
 
@@ -8389,8 +8419,43 @@ async def post_validation_excel(
         summary_df = pd.DataFrame(summary_data)
 
         # --- [10. Write to Excel with Perfect Styling] ---
+
+
         logger.info("Writing and Styling Excel...")
         
+
+        def style_configuration_sheet(workbook, sheet_name="Configuration"):
+            if sheet_name not in workbook.sheetnames:
+                return
+
+            ws = workbook[sheet_name]
+            ws.freeze_panes = "A2"
+
+            # Header styling
+            for cell in ws[1]:
+                cell.fill = fill_green
+                cell.font = font_white
+                cell.alignment = align_center
+                cell.border = border_thin
+
+            # Body styling
+            for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+                for cell in row:
+                    cell.border = border_thin
+
+                    # Center align Yes / No / Validate columns
+                    if str(cell.value).strip().lower() in {"yes", "no"}:
+                        cell.alignment = align_center
+
+            # Auto column width
+            for col in ws.iter_cols(max_row=ws.max_row):
+                max_length = 0
+                col_letter = get_column_letter(col[0].column)
+                for cell in col:
+                    if cell.value:
+                        max_length = max(max_length, len(str(cell.value)))
+                ws.column_dimensions[col_letter].width = min(max(max_length + 2, 12), 45)
+
         sheet_missing_ps = "Missing in PeopleSoft"
         sheet_missing_oc = "Missing in Oracle Cloud"
         sheet_discrepancies = "Data Discrepancies"
@@ -8470,10 +8535,11 @@ async def post_validation_excel(
 
         with pd.ExcelWriter(main_output_path, engine="openpyxl") as main_writer:
             summary_df.to_excel(main_writer, index=False, header=False, sheet_name="Summary")
+            config_df.to_excel(main_writer, index=False, sheet_name="Configuration")
             oracle_only_df.to_excel(main_writer, index=False, sheet_name=sheet_missing_ps)
             legacy_only_df.to_excel(main_writer, index=False, sheet_name=sheet_missing_oc)
+
             write_df_excel_paginated(main_writer, validation_df, sheet_discrepancies)
-            
             main_workbook = main_writer.book
             if includeSourceTargetFiles:
                 write_df_excel_paginated(main_writer, final_full_df, sheet_full_data)
@@ -8495,7 +8561,7 @@ async def post_validation_excel(
             for sheet in main_workbook.sheetnames:
                 if sheet.startswith(sheet_discrepancies):
                     style_sheet_header(main_workbook, sheet, fill_header_err)
-            
+            style_configuration_sheet(main_workbook, "Configuration")
             if includeSourceTargetFiles:
                 for sheet_name in main_workbook.sheetnames:
                     if sheet_name.startswith(sheet_full_data):
@@ -8569,7 +8635,7 @@ async def post_validation_excel(
                 zipf.write(source_target_output_path, arcname=f"PeopleSoft_OracleCloud_data_{report_ts}.xlsx")
 
         return FileResponse(
-            zip_output_path,
+            zip_output_path, 
             filename=f"MythicsValidationResults_{report_ts}.zip",
             media_type="application/zip"
         )
