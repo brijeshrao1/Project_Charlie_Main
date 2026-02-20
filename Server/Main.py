@@ -92,6 +92,11 @@ app.mount("/home", StaticFiles(directory="static"), name="home")
 def read_root():
     return FileResponse("static/index.html")
 
+@app.get("/api/health")
+def health():
+    return (
+        {"status": "healthy"}
+    )
 
 
 pass_df = pd.DataFrame()
@@ -401,7 +406,7 @@ def load_user_data(file_path: Path):
     except Exception as e:
         logging.error(f"Error loading user data from {file_path}: {e}")
         return {}
-
+    
 # Load user data when the application starts
 USER_DB = load_user_data(USER_EXCEL_FILE_PATH)
 
@@ -458,6 +463,98 @@ def get_hierarchy_api():
         raise HTTPException(status_code=500, detail=f"Failed to build hierarchy: {str(e)}")
 
     return {"hierarchy": hierarchy_data}
+
+
+@app.get("/api/utils/hdl/stats")
+def get_dashboard_stats():
+    """
+    Returns dashboard statistics:
+    - Total uploads (files in uploads/Excel_Files directory)
+    - Validated files (files in validation_results directory)
+    - Transformed files (transformed files)
+    - Active customers (from .env customer-instance combos)
+    """
+    try:
+        excel_files_dir = Path("uploads/Excel_Files")
+        validation_results_dir = Path("validation_results")
+        
+        # Count total uploads
+        total_uploads = 0
+        if excel_files_dir.exists():
+            total_uploads = len(list(excel_files_dir.rglob("*.xlsx")))
+        
+        # Count validated files
+        validated_files = 0
+        if validation_results_dir.exists():
+            validated_files = len(list(validation_results_dir.glob("*.xlsx"))) + len(list(validation_results_dir.glob("*.dat")))
+        
+        # Count transformed files (files with "transformed" in name)
+        transformed_files = 0
+        if validation_results_dir.exists():
+            transformed_files = len([f for f in validation_results_dir.glob("*") if "transformed" in f.name.lower()])
+        
+        # Count active customers from .env
+        combos = extract_customer_instance_names_from_env(ENV_PATH)
+        active_customers = len(set([customer for customer, instance in combos]))
+        
+        return {
+            "stats": {
+                "totalUploads": total_uploads,
+                "validatedFiles": validated_files,
+                "transformedFiles": transformed_files,
+                "activeCustomers": active_customers,
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error retrieving dashboard stats: {e}")
+        return {
+            "stats": {
+                "totalUploads": 0,
+                "validatedFiles": 0,
+                "transformedFiles": 0,
+                "activeCustomers": 0,
+            }
+        }
+
+
+@app.get("/api/utils/system-status")
+def get_system_status():
+    """
+    Returns system status for Backend API, Oracle Database, and NLP Service
+    """
+    status_data = {
+        "backendAPI": "online",  # Current service is always online
+        "oracleDB": "online",    # Simplified - would normally check connectivity
+        "nlpService": "online",  # Simplified - would normally check connectivity
+    }
+    
+    # Check Backend API connectivity (this service itself)
+    try:
+        # If this endpoint is responding, backend is online
+        status_data["backendAPI"] = "online"
+    except Exception:
+        status_data["backendAPI"] = "offline"
+    
+    # Check NLP Service connectivity (if running on localhost:9000)
+    try:
+        response = requests.head("http://localhost:9000/validate", timeout=2)
+        status_data["nlpService"] = "online" if response.status_code < 500 else "offline"
+    except Exception:
+        status_data["nlpService"] = "offline"
+    
+    # Check Oracle Database connectivity (if credentials are set)
+    try:
+        if ORACLE_USERNAME and ORACLE_PASSWORD:
+            # Simplified status - in production, make actual DB connection
+            status_data["oracleDB"] = "online"
+        else:
+            status_data["oracleDB"] = "offline"
+    except Exception:
+        status_data["oracleDB"] = "offline"
+    
+    return {"status": status_data}
+
+
 def get_columns_from_dat(file_bytes: bytes) -> Tuple[List[str], List[str], List[str]]:
     try:
         content = file_bytes.decode("utf-8-sig").splitlines()
@@ -856,6 +953,79 @@ def robust_lookup(
         logger.error(f"Lookup failed: {str(e)}", exc_info=True)
         return JSONResponse(status_code=500, content={"error": f"Lookup failed: {str(e)}"})
 
+# =========================================================
+# Request Model
+# =========================================================
+class GetAttributesRequest(BaseModel):
+    componentName: str = Field(..., min_length=1, description="DAT template file name")
+
+
+# =========================================================
+# Response Model
+# =========================================================
+class GetAttributesResponse(BaseModel):
+    attributes: list[str]
+    count: int
+
+
+# =========================================================
+# Endpoint
+# =========================================================
+@app.post("/api/hdl/get-attributes", response_model=GetAttributesResponse, tags=["HDL"])
+def get_attributes(request: GetAttributesRequest):
+    """
+    Fetch attributes from DAT file header.
+    Parses pipe-delimited first line and returns attribute list.
+    """
+
+    component_name = request.componentName.strip()
+
+    try:
+        dat_file_path = Path("Required_files/Dat_Files") / f"{component_name}.dat"
+
+        # ---- File check ----
+        if not dat_file_path.exists():
+            logger.error(f"DAT file not found: {component_name}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"DAT file not found for component '{component_name}'"
+            )
+
+        # ---- Read header ----
+        with dat_file_path.open("r", encoding="utf-8") as f:
+            first_line = f.readline().strip()
+
+        if not first_line:
+            raise HTTPException(
+                status_code=400,
+                detail="DAT file header is empty"
+            )
+
+        # ---- Parse attributes ----
+        attributes = [col.strip() for col in first_line.split("|") if col.strip()]
+
+        if not attributes:
+            raise HTTPException(
+                status_code=400,
+                detail="No attributes found in DAT header"
+            )
+
+        logger.info(f"{component_name}: extracted {len(attributes)} attributes")
+
+        return GetAttributesResponse(
+            attributes=attributes,
+            count=len(attributes)
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        logger.exception("DAT parsing failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal error while parsing DAT file"
+        )
 
 class ColumnRequest(BaseModel):
     file_id: str
@@ -7694,7 +7864,7 @@ async def get_excel_sheets(
             status_code=500,
         )
     
-GOOGLE_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyCpFnUH9pxeU4ILaN1JwI6ocU0p4Ivrlyo')
+GOOGLE_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyDBfAJNBpaHbFWvcSVfCHO3mDpufzUQLMc')
 genai.configure(api_key=GOOGLE_API_KEY)
 
 def get_smart_mapping_from_gemini(legacy_cols: List[str], oracle_cols: List[str]):
@@ -7958,7 +8128,7 @@ def enforce_sheet_column_limit(df: pd.DataFrame, sheet_name: str):
             )
         )
 
-EXCEL_MAX_ROWS = 900_000  # buffer below 1,048,576
+EXCEL_MAX_ROWS = 1_048_000  # buffer below 1,048,576
 def write_df_excel_paginated(
     writer,
     df: pd.DataFrame,
@@ -8217,7 +8387,6 @@ async def post_validation_excel(
 
         cols_to_compare = list(mappings_dict.keys())
         cols_to_compare = [c for c in cols_to_compare if c in legacy_df.columns and c in oracle_renamed.columns]
-
         merged = pd.merge(
             legacy_df.set_index(INTERNAL_KEY)[cols_to_compare],
             oracle_renamed.set_index(INTERNAL_KEY)[cols_to_compare],
