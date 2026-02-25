@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { gsap } from "gsap";
 import api from "../services/api";
 
@@ -300,6 +301,7 @@ const SectionTitle = ({ children }) => (
    DASHBOARD
 ───────────────────────────────────────── */
 export default function Dashboard() {
+  const navigate = useNavigate();
   const [stats, setStats] = useState({ totalNodes: 0, totalFiles: 0, totalTemplates: 0, totalCustomers: 0 });
   const [systemStatus, setSystemStatus] = useState({ backendAPI: "checking", oracleDB: "checking", nlpService: "checking" });
   const [loading, setLoading] = useState(true);
@@ -391,10 +393,12 @@ export default function Dashboard() {
   ];
 
   const actions = [
-    { icon: "📤", label: "Upload Files",          onClick: () => {} },
-    { icon: "🔍", label: "View Hierarchy",         onClick: () => {} },
-    { icon: "✓",  label: "Validate Data",          onClick: () => {} },
-    { icon: "⚙",  label: "Configure Components",   onClick: () => {} },
+    { icon: "→",  label: "Onboarding",              onClick: () => navigate("/onboarding") },
+    { icon: "⇋",  label: "Data Transformation",      onClick: () => navigate("/hdl") },
+    { icon: "✧",  label: "Pre Upload Validations",   onClick: () => navigate("/hierarchy") },
+    { icon: "▥",  label: "Import and Load Data",     onClick: () => navigate("/hdl") },
+    { icon: "✦",  label: "Post Upload Validations",  onClick: () => navigate("/post-validation") },
+    { icon: "⚙",  label: "Configuration",            onClick: () => navigate("/config") },
   ];
 
   return (

@@ -11,20 +11,7 @@ if (!document.getElementById("topbar-pvs-css")) {
   s.id = "topbar-pvs-css";
   s.textContent = `
     @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=Instrument+Sans:wght@400;600;700&display=swap');
-    @keyframes tb-pulse-green {
-      0%   { box-shadow: 0 0 0 0 rgba(39,174,96,.7); }
-      70%  { box-shadow: 0 0 0 7px rgba(39,174,96,0); }
-      100% { box-shadow: 0 0 0 0 rgba(39,174,96,0); }
-    }
-    @keyframes tb-pulse-red {
-      0%   { box-shadow: 0 0 0 0 rgba(192,57,43,.7); }
-      70%  { box-shadow: 0 0 0 7px rgba(192,57,43,0); }
-      100% { box-shadow: 0 0 0 0 rgba(192,57,43,0); }
-    }
-    @keyframes tb-checking {
-      0%, 100% { opacity: 1; }
-      50%       { opacity: .35; }
-    }
+    
     @keyframes tb-tick {
       from { opacity: 0; transform: translateY(-3px); }
       to   { opacity: 1; transform: translateY(0); }
@@ -42,6 +29,9 @@ if (!document.getElementById("topbar-pvs-css")) {
     .tb-action-btn:active {
       box-shadow: inset 3px 3px 8px rgba(0,0,0,.2), inset -2px -2px 6px rgba(255,255,255,.5) !important;
       transform: scale(0.98);
+    }
+    .tb-nav-btn:hover {
+      background: linear-gradient(145deg, #ddd6c6, #ccc4b0) !important;
     }
   `;
   document.head.appendChild(s);
@@ -94,7 +84,6 @@ const Screw = ({ style, angle = 45 }) => (
 export default function Topbar() {
   const navigate = useNavigate();
   
-  const [serverStatus, setServerStatus] = useState("checking");
   const [time,          setTime]        = useState(new Date());
   const [searchFocused, setSearchFocused]= useState(false);
   
@@ -121,13 +110,11 @@ export default function Topbar() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  /* server ping + array user data fetch */
+  /* Array user data fetch */
   useEffect(() => {
-    const ping = async () => {
+    const fetchCustomers = async () => {
       try { 
         const response = await api.get("/customers");
-        setServerStatus("online"); 
-        
         const data = response.data;
 
         if (Array.isArray(data)) {
@@ -145,12 +132,12 @@ export default function Topbar() {
             setAccounts(flattened);
           }
         }
-      } catch { 
-        setServerStatus("offline"); 
+      } catch (err) {
+        console.error("Failed to fetch customers:", err);
       }
     };
-    ping();
-    const id = setInterval(ping, 30000);
+    fetchCustomers();
+    const id = setInterval(fetchCustomers, 30000); // Polling every 30s
     return () => clearInterval(id);
   }, []);
 
@@ -181,7 +168,6 @@ export default function Topbar() {
   };
 
   const handleConfiguration = () => {
-    setDropdownOpen(false);
     navigate("/config", { 
       state: { 
         customerName: activeAccount?.customerName, 
@@ -194,15 +180,6 @@ export default function Topbar() {
   const full = time.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
   const [hhmm, ampm] = full.split(" ");
   const ss = time.getSeconds().toString().padStart(2, "0");
-
-  /* status vars */
-  const statusColor = serverStatus === "online" ? P.green : serverStatus === "offline" ? P.danger : P.amber;
-  const statusLabel = serverStatus === "online" ? "Connected" : serverStatus === "offline" ? "Disconnected" : "Checking…";
-  const dotAnim     = serverStatus === "online"
-    ? "tb-pulse-green 2.2s ease-out infinite"
-    : serverStatus === "offline"
-    ? "tb-pulse-red 2.2s ease-out infinite"
-    : "tb-checking 1.1s ease-in-out infinite";
 
   const avatarInitial = activeAccount?.customerName ? activeAccount.customerName.charAt(0).toUpperCase() : "A";
 
@@ -245,10 +222,10 @@ export default function Topbar() {
             fontFamily: "'DM Mono', monospace", fontSize: 8, letterSpacing: ".22em", textTransform: "uppercase",
             color: P.warmDrk, marginBottom: 4,
           }}>
-            Data Migration Suite
+            SmartERP's 
           </div>
           <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: P.ink, lineHeight: 1 }}>
-            Charlie HDL Management
+            Charlie
           </div>
         </div>
       </div>
@@ -294,19 +271,27 @@ export default function Topbar() {
         )}
       </div>
 
-      {/* ── RIGHT: Status + Clock + Avatar Dropdown ── */}
+      {/* ── RIGHT: Config + Clock + Avatar Dropdown ── */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
 
-        {/* Status */}
-        <div style={{
-          display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 9,
-          background: "linear-gradient(145deg, #c4bbb0, #cec6b8)", boxShadow: BS.insetSm, border: `1px solid ${statusColor}30`,
-        }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: statusColor, animation: dotAnim }} />
-          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, fontWeight: 500, letterSpacing: ".1em", textTransform: "uppercase", color: statusColor, whiteSpace: "nowrap" }}>
-            {statusLabel}
-          </span>
-        </div>
+        {/* Configuration Button */}
+        <button
+          onClick={handleConfiguration}
+          className="tb-action-btn tb-nav-btn"
+          style={{
+            display: "flex", alignItems: "center", gap: 8, 
+            padding: "8px 14px", borderRadius: 9,
+            background: "linear-gradient(145deg, #e0d8c8, #d0c8b8)", 
+            boxShadow: BS.raisedSm, border: "none", cursor: "pointer",
+            fontFamily: "'Instrument Sans', sans-serif", fontSize: 12, fontWeight: 600, color: P.ink
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M5.5 8.5A2 2 0 1 1 8.5 5.5A2 2 0 0 1 5.5 8.5Z" stroke={P.ink} strokeWidth="1.2"/>
+            <path d="M7 2.5V3.5M7 10.5V11.5M2.5 7H3.5M10.5 7H11.5M3.818 3.818L4.525 4.525M9.475 9.475L10.182 10.182M3.818 10.182L4.525 9.475M9.475 4.525L10.182 3.818" stroke={P.ink} strokeWidth="1.2" strokeLinecap="round"/>
+          </svg>
+          Configuration
+        </button>
 
         <Divider />
 
@@ -432,47 +417,24 @@ export default function Topbar() {
                 })}
               </div>
 
-              {/* ── Action Buttons ── */}
+              {/* ── Add New Customer Button ── */}
               <div style={{ 
                 padding: "10px", 
                 borderTop: "1px solid rgba(160,146,131,.3)",
                 background: "rgba(160,146,131,.08)",
-                display: "flex",
-                flexDirection: "column",
-                gap: 8
               }}>
-                {/* Configuration Button */}
-                <button
-                  onClick={handleConfiguration}
-                  className="tb-action-btn"
-                  style={{
-                    width: "100%", padding: "8px", borderRadius: 8,
-                    display: "flex", alignItems: "center", gap: 8,
-                    background: "transparent",
-                    border: `1px solid rgba(160,146,131,.5)`, cursor: "pointer",
-                    fontFamily: "'Instrument Sans', sans-serif", fontSize: 13, fontWeight: 600, color: P.ink
-                  }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ marginLeft: "6px" }}>
-                    <path d="M5.5 8.5A2 2 0 1 1 8.5 5.5A2 2 0 0 1 5.5 8.5Z" stroke={P.ink} strokeWidth="1.2"/>
-                    <path d="M7 2.5V3.5M7 10.5V11.5M2.5 7H3.5M10.5 7H11.5M3.818 3.818L4.525 4.525M9.475 9.475L10.182 10.182M3.818 10.182L4.525 9.475M9.475 4.525L10.182 3.818" stroke={P.ink} strokeWidth="1.2" strokeLinecap="round"/>
-                  </svg>
-                  Configuration
-                </button>
-
-                {/* Add New Customer Button */}
                 <button
                   onClick={handleAddNewCustomer}
-                  className="tb-action-btn"
+                  className="tb-action-btn tb-nav-btn"
                   style={{
                     width: "100%", padding: "8px", borderRadius: 8,
-                    display: "flex", alignItems: "center", gap: 8,
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                     background: "linear-gradient(145deg, #e0d8c8, #d0c8b8)",
                     boxShadow: BS.raisedSm, border: "none", cursor: "pointer",
                     fontFamily: "'Instrument Sans', sans-serif", fontSize: 13, fontWeight: 600, color: P.ink
                   }}
                 >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ marginLeft: "6px" }}>
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ marginLeft: "4px" }}>
                     <path d="M7 3V11M3 7H11" stroke={P.ink} strokeWidth="1.5" strokeLinecap="round"/>
                   </svg>
                   Add New Customer

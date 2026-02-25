@@ -18,7 +18,8 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: auto;
+  min-height: 0;
 }
 
 .content-wrapper {
@@ -107,3 +108,122 @@
   }
 }
 
+/* -------------------- Global Background -------------------- */
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", sans-serif;
+  background: #e0e5ec;
+}
+
+/* -------------------- Center Screen Layout -------------------- */
+
+.center-screen {
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.neo-container {
+  background: #e0e5ec;
+}
+
+/* -------------------- Neomorphic Card -------------------- */
+
+.neo-card {
+  padding: 50px;
+  border-radius: 20px;
+  background: #e0e5ec;
+  text-align: center;
+  width: 400px;
+
+  box-shadow:
+    10px 10px 20px #a3b1c6,
+    -10px -10px 20px #ffffff;
+}
+
+.neo-card h2 {
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+
+.neo-card p {
+  font-size: 14px;
+  color: #555;
+}
+
+/* -------------------- Skeuomorphic Spinner -------------------- */
+
+.spinner {
+  width: 60px;
+  height: 60px;
+  margin: 0 auto 20px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #ffffff, #cfd8e3);
+  box-shadow:
+    inset 5px 5px 10px #b8c3d1,
+    inset -5px -5px 10px #ffffff;
+
+  animation: spin 1.2s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* -------------------- Error Styling -------------------- */
+
+.error-card {
+  border: 1px solid #ff6b6b;
+}
+
+.warning-icon {
+  font-size: 40px;
+  margin-bottom: 15px;
+}
+
+/* -------------------- Terminal Box (Skeuomorphic Feel) -------------------- */
+
+.terminal-box {
+  margin-top: 20px;
+  padding: 15px;
+  border-radius: 10px;
+  background: #1e1e1e;
+  color: #00ff90;
+  font-family: monospace;
+  font-size: 13px;
+
+  box-shadow:
+    inset 3px 3px 6px #000000,
+    inset -3px -3px 6px #333333;
+}
+
+/* -------------------- Neomorphic Button -------------------- */
+
+.neo-button {
+  margin-top: 25px;
+  padding: 12px 25px;
+  border-radius: 12px;
+  border: none;
+  font-weight: 600;
+  cursor: pointer;
+  background: #e0e5ec;
+  transition: 0.2s ease;
+
+  box-shadow:
+    6px 6px 12px #a3b1c6,
+    -6px -6px 12px #ffffff;
+}
+
+.neo-button:hover {
+  box-shadow:
+    inset 4px 4px 8px #a3b1c6,
+    inset -4px -4px 8px #ffffff;
+}
+
+.neo-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
