@@ -1,0 +1,392 @@
+.hierarchy-container {
+  padding: var(--spacing-2xl);
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.center-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  gap: var(--spacing-lg);
+  text-align: center;
+}
+
+.spinner {
+  width: 50px;
+  height: 50px;
+  border: 4px solid rgba(0, 0, 0, 0.1);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.error-content {
+  background: linear-gradient(135deg, #ffe0e0 0%, #ffe8e8 100%);
+  border-radius: 12px;
+  padding: var(--spacing-3xl) var(--spacing-2xl);
+  border: 2px solid var(--accent);
+  text-align: center;
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 8px rgba(231, 76, 60, 0.15);
+}
+
+.error-content h2 {
+  color: var(--accent);
+  margin-bottom: var(--spacing-md);
+  font-size: 1.5rem;
+}
+
+.error-content p {
+  color: var(--text-secondary);
+  margin: var(--spacing-sm) 0;
+}
+
+.hierarchy-header {
+  margin-bottom: var(--spacing-2xl);
+  text-align: center;
+}
+
+.hierarchy-title {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--primary);
+  margin: 0 0 var(--spacing-sm) 0;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.hierarchy-subtitle {
+  font-size: 1rem;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.hierarchy-controls {
+  display: flex;
+  gap: var(--spacing-lg);
+  margin-bottom: var(--spacing-2xl);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.search-box {
+  flex: 1;
+  min-width: 250px;
+}
+
+.hierarchy-search {
+  width: 100%;
+  padding: var(--spacing-md) var(--spacing-lg);
+  border: 2px solid var(--border-color);
+  border-radius: 8px;
+  background: linear-gradient(135deg, #ffffff 0%, var(--bg-cream) 100%);
+  font-size: 1rem;
+  color: var(--primary);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(231, 76, 60, 0.1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.hierarchy-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.04), 0 0 0 3px rgba(231, 76, 60, 0.15);
+  transform: translateY(-2px);
+}
+
+.action-buttons {
+  display: flex;
+  gap: var(--spacing-md);
+}
+
+.control-button {
+  padding: var(--spacing-md) var(--spacing-lg);
+  background: linear-gradient(135deg, var(--accent) 0%, #c0392b 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.control-button:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+.control-button:active {
+  transform: translateY(0);
+  box-shadow: var(--shadow-sm);
+}
+
+.hierarchy-tree {
+  background: linear-gradient(135deg, #ffffff 0%, var(--bg-cream) 100%);
+  border-radius: 12px;
+  padding: var(--spacing-lg);
+  box-shadow: var(--shadow-md);
+  margin-bottom: var(--spacing-2xl);
+  max-height: 800px;
+  overflow-y: auto;
+}
+
+.tree-node {
+  margin-bottom: var(--spacing-sm);
+  padding-left: calc(var(--node-level, 0) * 24px);
+}
+
+.tree-node-content {
+  background: linear-gradient(135deg, #ffffff 0%, rgba(245, 243, 240, 0.5) 100%);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: var(--spacing-md);
+  margin-bottom: var(--spacing-xs);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 2px 4px rgba(0, 0, 0, 0.04);
+  transition: all 0.2s ease;
+}
+
+.tree-node-content:hover {
+  background: linear-gradient(135deg, #ffffff 0%, var(--bg-cream) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), var(--shadow-sm);
+  transform: translateX(2px);
+}
+
+.tree-node-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-xs);
+}
+
+.expand-button {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: linear-gradient(135deg, var(--primary) 0%, #1a252f 100%);
+  color: white;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  transition: all 0.2s ease;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2), 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.expand-button:hover {
+  background: linear-gradient(135deg, #34495e 0%, #1a252f 100%);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2), 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+.expand-button.expanded {
+  transform: rotate(90deg);
+}
+
+.expand-spacer {
+  width: 24px;
+  display: inline-block;
+}
+
+.node-icon {
+  font-size: 1.2rem;
+  margin-right: var(--spacing-xs);
+}
+
+.node-name {
+  font-weight: 600;
+  color: var(--primary);
+  font-size: 1.05rem;
+  flex: 1;
+}
+
+.mandatory-badge {
+  display: inline-block;
+  background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+  color: white;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  box-shadow: 0 2px 4px rgba(231, 76, 60, 0.3);
+}
+
+.conditional-badge {
+  display: inline-block;
+  background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
+  color: white;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  box-shadow: 0 2px 4px rgba(243, 156, 18, 0.3);
+}
+
+.node-meta {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-xs);
+  font-size: 0.9rem;
+  align-items: flex-start;
+}
+
+.meta-label {
+  font-weight: 600;
+  color: var(--accent);
+  min-width: 70px;
+}
+
+.meta-value {
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.action-text {
+  background: rgba(231, 76, 60, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #c0392b;
+  font-weight: 500;
+}
+
+.tree-children {
+  margin-top: var(--spacing-sm);
+  border-left: 2px dotted var(--border-color);
+  padding-left: var(--spacing-sm);
+}
+
+.hierarchy-empty {
+  text-align: center;
+  padding: var(--spacing-3xl) var(--spacing-lg);
+  background: linear-gradient(135deg, rgba(245, 243, 240, 0.5) 0%, rgba(255, 255, 255, 0.5) 100%);
+  border-radius: 10px;
+  border: 2px dashed var(--border-color);
+}
+
+.hierarchy-empty p {
+  margin: var(--spacing-sm) 0;
+  color: var(--text-secondary);
+}
+
+.hierarchy-empty p:first-child {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.empty-hint {
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+.hierarchy-legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: var(--spacing-lg);
+  padding: var(--spacing-lg);
+  background: linear-gradient(135deg, #ffffff 0%, var(--bg-cream) 100%);
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-sm);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+}
+
+.legend-icon {
+  font-size: 1.5rem;
+}
+
+.legend-text {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+/* Scrollbar styling */
+.hierarchy-tree::-webkit-scrollbar {
+  width: 8px;
+}
+
+.hierarchy-tree::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 10px;
+}
+
+.hierarchy-tree::-webkit-scrollbar-thumb {
+  background: linear-gradient(135deg, var(--primary) 0%, rgba(44, 62, 80, 0.7) 100%);
+  border-radius: 10px;
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.1);
+}
+
+.hierarchy-tree::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(135deg, #34495e 0%, var(--primary) 100%);
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .hierarchy-container {
+    padding: var(--spacing-lg);
+  }
+
+  .hierarchy-title {
+    font-size: 1.8rem;
+  }
+
+  .hierarchy-controls {
+    flex-direction: column;
+    gap: var(--spacing-md);
+  }
+
+  .search-box,
+  .action-buttons {
+    width: 100%;
+  }
+
+  .control-button {
+    width: 100%;
+  }
+
+  .tree-node {
+    padding-left: calc(var(--node-level, 0) * 16px);
+  }
+
+  .hierarchy-tree {
+    max-height: 600px;
+  }
+
+  .hierarchy-legend {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .hierarchy-title {
+    font-size: 1.5rem;
+  }
+
+  .tree-node-content {
+    padding: var(--spacing-sm);
+  }
+
+  .node-name {
+    font-size: 0.95rem;
+  }
+
+  .hierarchy-tree {
+    max-height: 500px;
+  }
+}

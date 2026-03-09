@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useLocation, useNavigate } from "react-router-dom";
 import { gsap } from "gsap";
 import api from "../services/api";
-
+import './hdl.css';
 /* ─────────────────────────────────────────
    BASE URL for non-api routes (/excel, /static)
 ───────────────────────────────────────── */
@@ -10,114 +10,9 @@ const BASE_URL =
   (api.defaults.baseURL || "http://localhost:8000/api").replace(/\/api\/?$/, "") ||
   "http://localhost:8000";
 
-/* ─────────────────────────────────────────
-   GLOBAL CSS
-───────────────────────────────────────── */
-if (!document.getElementById("hdl-pvs-css")) {
-  const s = document.createElement("style");
-  s.id = "hdl-pvs-css";
-  s.textContent = `
-    @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600;700&display=swap');
 
-    @keyframes hdl-spin    { to { transform: rotate(360deg); } }
-    @keyframes hdl-slide-in {
-      from { opacity: 0; transform: translateY(16px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-    @keyframes hdl-toast-in {
-      from { opacity: 0; transform: translateX(100%); }
-      to   { opacity: 1; transform: translateX(0); }
-    }
-    @keyframes hdl-toast-out {
-      from { opacity: 1; transform: translateX(0); }
-      to   { opacity: 0; transform: translateX(100%); }
-    }
 
-    .hdl-root {
-      flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
-      background: linear-gradient(160deg, #ede8dc 0%, #d8d0c0 100%);
-      font-family: 'Instrument Sans', sans-serif;
-    }
-    .hdl-body {
-      flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
-      padding: 24px 28px;
-    }
-    .hdl-body::-webkit-scrollbar { width: 6px; }
-    .hdl-body::-webkit-scrollbar-track { background: transparent; }
-    .hdl-body::-webkit-scrollbar-thumb { background: rgba(184,115,51,.3); border-radius: 3px; }
-
-    .hdl-table-wrap {
-      overflow-x: auto; overflow-y: auto; overscroll-behavior: contain; position: relative;
-    }
-    .hdl-table-wrap::-webkit-scrollbar { height: 6px; width: 6px; }
-    .hdl-table-wrap::-webkit-scrollbar-track { background: rgba(0,0,0,.04); border-radius: 3px; }
-    .hdl-table-wrap::-webkit-scrollbar-thumb { background: rgba(184,115,51,.35); border-radius: 3px; }
-
-    .hdl-check { width: 16px; height: 16px; cursor: pointer; accent-color: #b87333; border-radius: 3px; }
-    .hdl-row:hover { background: rgba(184,115,51,.06) !important; }
-
-    .hdl-btn {
-      display: inline-flex; align-items: center; gap: 7px;
-      border: none; outline: none; cursor: pointer; user-select: none;
-      font-family: 'Instrument Sans', sans-serif; font-weight: 700;
-      letter-spacing: .05em; text-transform: uppercase;
-      transition: opacity .15s ease; white-space: nowrap;
-    }
-    .hdl-btn:disabled { opacity: .45; cursor: not-allowed; }
-
-    .hdl-step-connector {
-      flex: 1; height: 2px;
-      background: linear-gradient(to right, rgba(184,115,51,.3), rgba(184,115,51,.1));
-      margin: 0 4px; align-self: center; margin-bottom: 20px;
-    }
-    .hdl-step-connector.done { background: linear-gradient(to right, #b87333, rgba(184,115,51,.5)); }
-
-    .hdl-lookup-pill {
-      display: inline-block; padding: 2px 8px; border-radius: 4px;
-      font-family: 'DM Mono', monospace; font-size: 10px; font-weight: 500;
-      letter-spacing: .06em; color: #b87333;
-      background: rgba(184,115,51,.12); border: 1px solid rgba(184,115,51,.25);
-    }
-
-    .hdl-modal-overlay {
-      position: fixed; inset: 0; background: rgba(44,36,32,.55); z-index: 10000;
-      display: flex; align-items: center; justify-content: center;
-      padding: 24px;
-    }
-    .hdl-modal {
-      width: 100%; max-width: 900px; border-radius: 16px;
-      background: linear-gradient(160deg, #ede8dc 0%, #d8d0c0 100%);
-      box-shadow: 16px 16px 40px rgba(0,0,0,.55), -8px -8px 28px rgba(255,255,255,.9);
-      position: relative; overflow: hidden;
-      display: flex; flex-direction: column; max-height: 85vh;
-    }
-
-    .hdl-file-pill {
-      display: inline-flex; align-items: center; gap: 8px;
-      padding: 8px 16px; border-radius: 8px;
-      background: linear-gradient(145deg, #ddd6c6, #c8bfad);
-      box-shadow: inset 3px 3px 8px rgba(0,0,0,.28), inset -2px -2px 6px rgba(255,255,255,.6);
-      font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: .04em; color: #5c4e44;
-    }
-
-    .hdl-pg-btn {
-      width: 28px; height: 28px; border-radius: 7px; border: none; cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-      font-family: 'DM Mono', monospace; font-size: 11px; transition: all .15s ease;
-    }
-    .hdl-pg-btn:disabled { opacity: .35; cursor: default; }
-
-    .hdl-toast {
-      position: fixed; bottom: 24px; right: 24px; z-index: 99999;
-      padding: 14px 22px; border-radius: 10px; max-width: 420px;
-      font-family: 'DM Mono', monospace; font-size: 12px; letter-spacing: .03em;
-      box-shadow: 8px 8px 22px rgba(0,0,0,.42), -5px -5px 16px rgba(255,255,255,.88);
-      animation: hdl-toast-in .3s ease;
-      display: flex; align-items: center; gap: 10px;
-    }
-  `;
-  document.head.appendChild(s);
-}
+/* GLOBAL CSS moved to hdl.css */
 
 /* ─────────────────────────────────────────
    TOKENS
@@ -171,6 +66,16 @@ const NeuBtn = ({ children, onClick, accent = false, danger = false, success = f
     </button>
   );
 };
+
+/* ─── NeuToggle ─── */
+const NeuToggle = ({ checked, onChange }) => (
+  <div className={`hdl-toggle${checked ? " on" : ""}`}
+    role="switch" aria-checked={checked} tabIndex={0}
+    onClick={() => onChange(!checked)}
+    onKeyDown={e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); onChange(!checked); } }}>
+    <div className="hdl-toggle-knob" />
+  </div>
+);
 
 /* ─── SectionCard ─── */
 const SectionCard = ({ children, style }) => (
@@ -252,6 +157,58 @@ const Toast = ({ message, severity, onClose }) => {
   );
 };
 
+  /* ─────────────────────────────────────────
+     LOOKUP VALUES DIALOG
+  ───────────────────────────────────────── */
+  const LookupDialog = ({ attr, values, onClose }) => {
+    if (!values) return null;
+    const cols = values.length > 0 ? Object.keys(values[0]) : [];
+    return (
+      <div className="hdl-modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+        <div className="hdl-modal" style={{ maxWidth: 860 }}>
+          <div style={{
+            padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between",
+            background: "linear-gradient(160deg, #d0c8b8, #c0b8a8)", boxShadow: BS.insetSm, borderBottom: "1px solid rgba(0,0,0,.08)",
+          }}>
+            <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 16, color: P.ink }}>Lookup Values for {attr}</div>
+            <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 7, background: "linear-gradient(145deg, #ddd6c6, #c8bfad)", boxShadow: BS.raisedSm, border: "none", cursor: "pointer" }}>✕</button>
+          </div>
+
+          <div style={{ padding: 18, overflowY: "auto", maxHeight: "60vh" }}>
+            {values.length === 0 ? (
+              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 13, color: P.warmDrk }}>No lookup values available.</div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'DM Mono', monospace", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: "rgba(184,115,51,.06)" }}>
+                      {cols.map(c => (
+                        <th key={c} style={{ textAlign: "left", padding: "8px 10px", fontSize: 11, color: P.warmDrk, textTransform: "uppercase", borderBottom: "1px solid rgba(0,0,0,.08)" }}>{c}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {values.map((r, i) => (
+                      <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : "rgba(0,0,0,.02)" }}>
+                        {cols.map(c => (
+                          <td key={c} style={{ padding: "8px 10px", borderBottom: "1px solid rgba(0,0,0,.05)", wordBreak: "break-word" }}>{String(r[c] ?? "")}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div style={{ padding: "12px 18px", background: "linear-gradient(160deg, #d0c8b8, #c0b8a8)", boxShadow: `${BS.insetSm}, 0 -2px 8px rgba(0,0,0,.1)`, borderTop: "1px solid rgba(0,0,0,.08)", display: "flex", justifyContent: "flex-end" }}>
+            <NeuBtn small onClick={onClose}>Close</NeuBtn>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
 /* ─────────────────────────────────────────
    VALIDATION RESULTS DIALOG
 ───────────────────────────────────────── */
@@ -260,6 +217,7 @@ const ValidationResultsDialog = ({ result, onClose }) => {
   if (!result) return null;
   const main = result.mainValidation;
   const le = result.legalEmployerValidation;
+  const validationTabLabel = le?.label || "Cross-File Validation";
   const isSuccess = result.status !== "failed";
 
   return (
@@ -268,7 +226,7 @@ const ValidationResultsDialog = ({ result, onClose }) => {
         {/* Header */}
         <div style={{
           padding: "18px 22px",
-          background: isSuccess ? "rgba(39,174,96,.1)" : "rgba(192,57,43,.1)",
+          background: isSuccess ? "rgba(195, 165, 30, 0.1)" : "rgba(192,57,43,.1)",
           boxShadow: BS.insetSm, borderBottom: "1px solid rgba(0,0,0,.08)",
           display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0,
         }}>
@@ -299,7 +257,7 @@ const ValidationResultsDialog = ({ result, onClose }) => {
               background: tab === 1 ? "rgba(184,115,51,.1)" : "transparent",
               color: tab === 1 ? (le.status === "failed" ? P.danger : P.green) : P.inkLt,
               borderBottom: tab === 1 ? `2px solid ${le.status === "failed" ? P.danger : P.green}` : "2px solid transparent",
-            }}>Legal Employer Validation</button>
+            }}>{validationTabLabel}</button>
           )}
         </div>
 
@@ -393,73 +351,537 @@ const ValidationResultsDialog = ({ result, onClose }) => {
 };
 
 /* ─────────────────────────────────────────
-   SOURCE KEYS DIALOG
+   SOURCE KEYS DIALOG  (Neumorphic / Skeuomorphic)
 ───────────────────────────────────────── */
-const SourceKeysDialog = ({ skippedColumns, allAttributes, mapping, onMappingChange, onClose }) => {
-  const [localMapping, setLocalMapping] = useState(mapping || {});
+const CHIP_INCREMENT = 10;
 
-  const updateKey = (col, val) => {
-    setLocalMapping(prev => ({ ...prev, [col]: val }));
+const SourceKeysDialog = ({
+  skippedColumns,
+  allAttributes,
+  mapping,
+  onMappingChange,
+  onClose,
+  selectedComponentName = "",
+  customerName = "DefaultCustomer",
+  instanceName = "DefaultInstance",
+}) => {
+  const [selectedAttr, setSelectedAttr] = useState("");
+  const [inputValue, setInputValue] = useState("");
+  const [showInput, setShowInput] = useState(false);
+  const [formData, setFormData] = useState(mapping || {});
+  const [visibleChipCount, setVisibleChipCount] = useState(CHIP_INCREMENT);
+  const [chipFilter, setChipFilter] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef(null);
+  const modalRef = useRef(null);
+  const chipsRef = useRef(null);
+
+  const apiEndPoint = (api.defaults.baseURL || "http://localhost:8000/api").replace(/\/api\/?$/, "") || "http://localhost:8000";
+
+  /* ── Entrance animation ── */
+  useEffect(() => {
+    if (modalRef.current) {
+      gsap.fromTo(modalRef.current,
+        { opacity: 0, y: 30, scale: 0.96 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.35, ease: "back.out(1.4)" }
+      );
+    }
+  }, [loading, error]);
+
+  /* ── Staggered chip entrance ── */
+  useEffect(() => {
+    if (chipsRef.current && showInput) {
+      const chips = chipsRef.current.querySelectorAll(".hdl-neu-chip");
+      if (chips.length) {
+        gsap.fromTo(chips,
+          { opacity: 0, y: 6, scale: 0.92 },
+          { opacity: 1, y: 0, scale: 1, duration: 0.2, stagger: 0.015, ease: "back.out(2)" }
+        );
+      }
+    }
+  }, [showInput, visibleChipCount, chipFilter]);
+
+  /* ── Save mapping to backend ── */
+  const saveMappingToBackend = async (data) => {
+    if (!selectedComponentName || !customerName || !instanceName) {
+      console.warn("Missing required info to save mapping.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = { customerName, instanceName, componentName: selectedComponentName, mappedAttributes: data };
+      const response = await fetch(`${apiEndPoint}/api/hdl/save-attribute-mapping`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Failed to save. Status: ${response.status}`);
+      }
+    } catch (e) {
+      console.error("Error saving attribute mapping:", e);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleSave = () => {
-    onMappingChange(localMapping);
-    onClose();
+  /* ── Load mapping from backend ── */
+  useEffect(() => {
+    const loadMappingFromBackend = async () => {
+      if (!selectedComponentName || !customerName || !instanceName) { setLoading(false); return; }
+      setLoading(true); setError(null);
+      try {
+        const response = await fetch(
+          `${apiEndPoint}/api/hdl/get-attribute-mapping/${customerName}/${instanceName}/${selectedComponentName}`
+        );
+        if (!response.ok) {
+          if (response.status === 404) { setFormData({}); onMappingChange({}); }
+          else { const d = await response.json(); throw new Error(d.detail || `Status ${response.status}`); }
+        } else {
+          const result = await response.json();
+          if (result?.mappedAttributes) { setFormData(result.mappedAttributes); onMappingChange(result.mappedAttributes); }
+          else { setFormData({}); onMappingChange({}); }
+        }
+      } catch (e) { console.error(e); setError("Failed to load data: " + e.message); }
+      finally { setLoading(false); }
+    };
+    loadMappingFromBackend();
+  }, [selectedComponentName, customerName, instanceName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── Handlers ── */
+  const handleSelectAttr = (e) => {
+    const attr = e.target.value;
+    if (!attr) return;
+    setSelectedAttr(attr);
+    setShowInput(true);
+    setInputValue(formData[attr] || "");
+    setChipFilter("");
+    setVisibleChipCount(CHIP_INCREMENT);
+    setTimeout(() => inputRef.current?.focus(), 80);
   };
+
+  const insertAtCursor = (value) => {
+    const input = inputRef.current;
+    if (!input) return;
+    const s = input.selectionStart, e = input.selectionEnd;
+    const nv = input.value.slice(0, s) + value + input.value.slice(e);
+    setInputValue(nv);
+    setTimeout(() => { input.setSelectionRange(s + value.length, s + value.length); input.focus(); }, 0);
+  };
+
+  const handleInputSave = async (e) => {
+    e.preventDefault();
+    if (selectedAttr && inputValue.trim()) {
+      const nf = { ...formData, [selectedAttr]: inputValue };
+      setFormData(nf);
+      await saveMappingToBackend(nf);
+      onMappingChange(nf);
+      setShowInput(false); setSelectedAttr(""); setInputValue(""); setChipFilter("");
+    } else if (inputRef.current) {
+      gsap.to(inputRef.current, { x: 5, yoyo: true, repeat: 3, duration: 0.1, ease: "power1.inOut" });
+    }
+  };
+
+  const handleDeleteAttr = async (attr) => {
+    const nf = { ...formData }; delete nf[attr];
+    setFormData(nf); saveMappingToBackend(nf); onMappingChange(nf);
+    if (selectedAttr === attr) { setSelectedAttr(""); setInputValue(""); setShowInput(false); }
+  };
+
+  const handleEditAttr = (attr, val) => {
+    setSelectedAttr(attr); setInputValue(val); setShowInput(true); setChipFilter("");
+    setTimeout(() => inputRef.current?.focus(), 80);
+  };
+
+  const quickChipClick = (label) => {
+    insertAtCursor(label);
+    if (inputRef.current) {
+      gsap.fromTo(inputRef.current,
+        { boxShadow: `${BS.insetSm}, 0 0 0 2px rgba(184,115,51,.45)` },
+        { boxShadow: BS.insetSm, duration: 0.4, ease: "power2.out" }
+      );
+    }
+  };
+
+  const availableForDropdown = skippedColumns.filter(a => !Object.keys(formData).includes(a) || a === selectedAttr);
+  const chipSource = allAttributes.length > 0 ? allAttributes : skippedColumns;
+  const filteredChips = chipFilter
+    ? chipSource.filter(c => c.toLowerCase().includes(chipFilter.toLowerCase()))
+    : chipSource;
+  const handleLoadMore = () => setVisibleChipCount(p => Math.min(p + CHIP_INCREMENT, filteredChips.length));
+  const handleShowLess = () => setVisibleChipCount(CHIP_INCREMENT);
+  const mappedCount = Object.keys(formData).length;
+
+  /* ── Loading state ── */
+  if (loading) {
+    return (
+      <div className="hdl-modal-overlay">
+        <div ref={modalRef} className="hdl-modal" style={{ maxWidth: 420, alignItems: "center", justifyContent: "center", padding: 48 }}>
+          <Screw style={{ top: 10, left: 10 }} angle={30} />
+          <Screw style={{ top: 10, right: 10 }} angle={120} />
+          <div style={{
+            width: 36, height: 36, borderRadius: "50%",
+            border: `3px solid ${P.copper}`, borderTopColor: "transparent",
+            animation: "hdl-spin .7s linear infinite", marginBottom: 14,
+          }} />
+          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 13, color: P.inkLt, letterSpacing: ".04em" }}>
+            Loading source keys…
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── Error state ── */
+  if (error) {
+    return (
+      <div className="hdl-modal-overlay">
+        <div ref={modalRef} className="hdl-modal" style={{ maxWidth: 480, padding: 36, alignItems: "center", textAlign: "center" }}>
+          <Screw style={{ top: 10, left: 10 }} angle={30} />
+          <Screw style={{ top: 10, right: 10 }} angle={120} />
+          <div style={{ fontSize: 28, marginBottom: 10 }}>⚠</div>
+          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: P.danger, marginBottom: 18, display: "block" }}>
+            {error}
+          </span>
+          <NeuBtn small onClick={onClose}>Close</NeuBtn>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="hdl-modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="hdl-modal" style={{ maxWidth: 780 }}>
+    <div className="hdl-modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div ref={modalRef} className="hdl-modal" style={{ maxWidth: 960 }}>
+        <Screw style={{ top: 10, left: 10 }} angle={30} />
+        <Screw style={{ top: 10, right: 10 }} angle={120} />
+        <Screw style={{ bottom: 10, left: 10 }} angle={-30} />
+        <Screw style={{ bottom: 10, right: 10 }} angle={-120} />
+
+        {/* ─── Header ─── */}
         <div style={{
-          padding: "18px 22px", background: "linear-gradient(160deg, #d0c8b8, #c0b8a8)",
-          boxShadow: BS.insetSm, borderBottom: "1px solid rgba(0,0,0,.08)",
-          display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0,
+          padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between",
+          background: "linear-gradient(160deg, #d0c8b8, #c0b8a8)",
+          boxShadow: BS.insetSm, borderBottom: "1px solid rgba(0,0,0,.08)", flexShrink: 0,
         }}>
-          <span style={{ fontFamily: "'DM Serif Display', serif", fontSize: 18, color: P.ink }}>Source Keys Editor</span>
-          <button onClick={onClose} style={{
-            width: 30, height: 30, borderRadius: 7,
-            background: "linear-gradient(145deg, #ddd6c6, #c8bfad)", boxShadow: BS.raisedSm,
-            border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-            fontFamily: "'DM Mono', monospace", fontSize: 14, color: P.inkLt,
-          }}>✕</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{
+              width: 34, height: 34, borderRadius: 8,
+              background: "linear-gradient(135deg, #c8843a, #7a4e28)", boxShadow: BS.raisedSm,
+              display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: "#f8f0e0",
+            }}>🗝</div>
+            <div>
+              <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: 20, color: P.ink, lineHeight: 1.2 }}>
+                Source Keys Editor
+              </div>
+              {selectedComponentName && (
+                <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: P.copper, letterSpacing: ".04em", marginTop: 2 }}>
+                  {selectedComponentName}
+                </div>
+              )}
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {saving && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{
+                  width: 14, height: 14, borderRadius: "50%",
+                  border: `2px solid ${P.copper}`, borderTopColor: "transparent",
+                  animation: "hdl-spin .7s linear infinite",
+                }} />
+                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: P.copper, letterSpacing: ".04em" }}>Saving</span>
+              </div>
+            )}
+            <button onClick={onClose} style={{
+              width: 32, height: 32, borderRadius: 7,
+              background: "linear-gradient(145deg, #ddd6c6, #c8bfad)", boxShadow: BS.raisedSm,
+              border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+              fontFamily: "'DM Mono', monospace", fontSize: 15, color: P.inkLt, transition: "all .15s ease",
+            }}
+              onMouseDown={e => { e.currentTarget.style.boxShadow = BS.pressed; }}
+              onMouseUp={e => { e.currentTarget.style.boxShadow = BS.raisedSm; }}
+            >✕</button>
+          </div>
         </div>
 
-        <div style={{ flex: 1, overflowY: "auto", padding: "20px 22px" }}>
-          <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, letterSpacing: ".12em", textTransform: "uppercase", color: P.warmDrk, marginBottom: 14 }}>
-            Map Source Key Columns ({skippedColumns.length} columns)
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {skippedColumns.map((col) => (
-              <div key={col} style={{
-                display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 9,
-                background: "linear-gradient(145deg, #ccc4b4, #c4bcac)", boxShadow: BS.insetSm,
+        {/* ─── Body ─── */}
+        <div style={{ flex: 1, overflowY: "auto", display: "flex", gap: 0, minHeight: 0 }}>
+
+          {/* ═══ LEFT PANEL — Filled Attribute Values ═══ */}
+          <div style={{
+            width: "40%", flexShrink: 0, overflowY: "auto", padding: "22px 18px",
+            borderRight: "1px solid rgba(0,0,0,.08)",
+            background: "linear-gradient(180deg, rgba(237,232,220,.4), rgba(216,208,192,.4))",
+          }}>
+            <div style={{
+              fontFamily: "'Instrument Sans', sans-serif", fontSize: 16, fontWeight: 700,
+              color: P.ink, marginBottom: 18, textAlign: "center", letterSpacing: ".02em",
+            }}>
+              Filled Attribute Values
+            </div>
+
+            {mappedCount === 0 ? (
+              <div style={{
+                padding: "36px 16px", textAlign: "center",
+                fontFamily: "'DM Mono', monospace", fontSize: 13, color: P.warmDrk, fontStyle: "italic",
               }}>
-                <div style={{ flex: 1, fontFamily: "'DM Mono', monospace", fontSize: 12, color: P.ink, minWidth: 120 }}>{col}</div>
-                <span style={{ fontSize: 14, color: P.warmDrk }}>→</span>
-                <input type="text" value={localMapping[col] || ""} onChange={(e) => updateKey(col, e.target.value)}
-                  placeholder="Enter source key value…"
-                  style={{
-                    flex: 2, padding: "8px 12px", borderRadius: 7, border: "none", outline: "none",
-                    background: "linear-gradient(145deg, #ddd6c6, #ccc4b4)", boxShadow: BS.insetSm,
-                    fontFamily: "'DM Mono', monospace", fontSize: 12, color: P.ink,
-                  }} />
+                <span style={{ fontSize: 28, display: "block", marginBottom: 10, opacity: .4 }}>◇</span>
+                No values filled yet.
               </div>
-            ))}
-            {skippedColumns.length === 0 && (
-              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: P.warmDrk, fontStyle: "italic", padding: 20, textAlign: "center" }}>
-                No source key columns detected. Upload a DAT file first.
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {Object.entries(formData).map(([attr, value]) => (
+                  <div key={attr} style={{
+                    padding: "14px 16px", borderRadius: 10,
+                    background: "linear-gradient(145deg, #e2dace, #d0c8b8)",
+                    boxShadow: BS.raisedSm,
+                    transition: "transform .15s ease, box-shadow .15s ease",
+                  }}
+                    onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-1px)"; e.currentTarget.style.boxShadow = BS.raised; }}
+                    onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = BS.raisedSm; }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <span style={{
+                        fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 700,
+                        color: P.copper, letterSpacing: ".03em",
+                      }}>{attr}</span>
+                      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                        <button onClick={() => handleEditAttr(attr, value)} title="Edit"
+                          style={{
+                            width: 26, height: 26, borderRadius: 6, border: "none", cursor: "pointer",
+                            background: "linear-gradient(145deg, #ddd6c6, #c8bfad)", boxShadow: BS.raisedSm,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 12, color: "#3a7cc8", transition: "all .12s ease",
+                          }}
+                          onMouseDown={e => { e.currentTarget.style.boxShadow = BS.pressed; }}
+                          onMouseUp={e => { e.currentTarget.style.boxShadow = BS.raisedSm; }}
+                        >✎</button>
+                        <button onClick={() => handleDeleteAttr(attr)} title="Delete"
+                          style={{
+                            width: 26, height: 26, borderRadius: 6, border: "none", cursor: "pointer",
+                            background: "linear-gradient(145deg, #ddd6c6, #c8bfad)", boxShadow: BS.raisedSm,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 12, color: P.danger, transition: "all .12s ease",
+                          }}
+                          onMouseDown={e => { e.currentTarget.style.boxShadow = BS.pressed; }}
+                          onMouseUp={e => { e.currentTarget.style.boxShadow = BS.raisedSm; }}
+                        >✕</button>
+                      </div>
+                    </div>
+                    <div style={{
+                      fontFamily: "'DM Mono', monospace", fontSize: 13, color: P.ink,
+                      wordBreak: "break-word", lineHeight: 1.5,
+                    }}>{value}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ═══ RIGHT PANEL — Attribute Selection & Input ═══ */}
+          <div style={{ flex: 1, overflowY: "auto", padding: "22px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
+
+            {/* ── Dropdown ── */}
+            <div>
+              <div style={{
+                fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: ".08em",
+                textTransform: "uppercase", color: P.inkLt, marginBottom: 10, fontWeight: 600,
+              }}>Select Source Key Attribute</div>
+              <select
+                className="hdl-sk-select"
+                value={selectedAttr}
+                onChange={handleSelectAttr}
+                style={{ width: "100%", fontSize: 13, padding: "11px 32px 11px 14px" }}
+              >
+                <option value="">— Choose attribute —</option>
+                {availableForDropdown.map(attr => (
+                  <option key={attr} value={attr}>{attr}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* ── Input area (visible after dropdown selection) ── */}
+            {showInput && (
+              <div style={{
+                padding: "20px 22px", borderRadius: 12,
+                background: "linear-gradient(145deg, #d4ccbc, #cac2b2)",
+                boxShadow: BS.insetSm,
+                display: "flex", flexDirection: "column", gap: 20,
+              }}>
+
+                {/* Input row */}
+                <form onSubmit={handleInputSave} style={{ display: "flex", gap: 10, alignItems: "stretch" }}>
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={inputValue}
+                    onChange={e => setInputValue(e.target.value)}
+                    placeholder={`Enter value for {${selectedAttr}}…`}
+                    style={{
+                      flex: 1, padding: "11px 14px", borderRadius: 8, border: "none", outline: "none",
+                      background: "linear-gradient(145deg, #e2dace, #d4ccbc)", boxShadow: BS.insetSm,
+                      fontFamily: "'DM Mono', monospace", fontSize: 13, color: P.ink,
+                      transition: "box-shadow .2s ease",
+                    }}
+                    onFocus={e => { e.target.style.boxShadow = `${BS.insetSm}, 0 0 0 2px rgba(184,115,51,.3)`; }}
+                    onBlur={e => { e.target.style.boxShadow = BS.insetSm; }}
+                  />
+                  <NeuBtn small accent onClick={handleInputSave} icon="✓">Save</NeuBtn>
+                </form>
+
+                {/* ── Quick Insert chips ── */}
+                <div style={{
+                  fontFamily: "'Instrument Sans', sans-serif", fontSize: 13, color: P.inkLt,
+                  letterSpacing: ".01em",
+                }}>Click chips below to insert into the input field:</div>
+
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                  {/* Component name chip */}
+                  {selectedComponentName && (
+                    <span className="hdl-neu-chip" onClick={() => quickChipClick(selectedComponentName)}
+                      style={{
+                        background: "linear-gradient(135deg, #7a9cc8, #3a5c8a)", color: "#f0f4ff",
+                        boxShadow: BS.raisedSm, fontSize: 12,
+                      }}>
+                      ◈ {selectedComponentName}
+                    </span>
+                  )}
+                  {/* MERGE chip */}
+                  <span className="hdl-neu-chip" onClick={() => quickChipClick("MERGE")}
+                    style={{
+                      background: "linear-gradient(135deg, #c8843a, #7a4e28)", color: "#f8f0e0",
+                      boxShadow: BS.raisedSm, fontSize: 12,
+                    }}>
+                    ⇌ MERGE
+                  </span>
+                  {/* Iterator chip */}
+                  <span className="hdl-neu-chip" onClick={() => quickChipClick("{Iterator}")}
+                    style={{
+                      background: "linear-gradient(135deg, #27ae60, #1a7a42)", color: "#e8f8ee",
+                      boxShadow: BS.raisedSm, fontSize: 12,
+                    }}>
+                    ↻ Iterator
+                  </span>
+                </div>
+
+                {/* ── Attribute chips section ── */}
+                <div style={{
+                  fontFamily: "'Instrument Sans', sans-serif", fontSize: 13, color: P.inkLt,
+                  letterSpacing: ".01em",
+                }}>Attributes ({filteredChips.length})</div>
+
+                {/* Filter input */}
+                <div style={{ position: "relative" }}>
+                  <span style={{
+                    position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)",
+                    fontSize: 12, opacity: 0.5, pointerEvents: "none",
+                  }}>🔍</span>
+                  <input
+                    className="hdl-filter-input"
+                    type="text"
+                    value={chipFilter}
+                    onChange={e => { setChipFilter(e.target.value); setVisibleChipCount(CHIP_INCREMENT); }}
+                    placeholder="Filter attributes…"
+                  />
+                  {chipFilter && (
+                    <button type="button" onClick={() => { setChipFilter(""); setVisibleChipCount(CHIP_INCREMENT); }}
+                      style={{
+                        position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                        width: 20, height: 20, borderRadius: 5, border: "none", cursor: "pointer",
+                        background: "transparent", fontSize: 12, color: P.warmDrk,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}>✕</button>
+                  )}
+                </div>
+
+                {/* Attribute chips grid */}
+                <div ref={chipsRef} className="hdl-sk-chips-wrap" style={{ maxHeight: 220 }}>
+                  {filteredChips.length === 0 ? (
+                    <span style={{
+                      fontFamily: "'DM Mono', monospace", fontSize: 12, color: P.warmDrk,
+                      fontStyle: "italic", padding: 10,
+                    }}>
+                      No attributes match "{chipFilter}"
+                    </span>
+                  ) : (
+                    filteredChips.slice(0, visibleChipCount).map((attr, idx) => (
+                      <span key={idx}
+                        className="hdl-neu-chip"
+                        onClick={() => quickChipClick(`{${attr}}`)}
+                        title={`Insert {${attr}} at cursor`}
+                        style={attr === selectedAttr ? {
+                          background: "linear-gradient(135deg, #c8843a, #7a4e28)", color: "#f8f0e0",
+                          boxShadow: `${BS.raisedSm}, 0 0 8px rgba(184,115,51,.25)`,
+                        } : {}}
+                      >
+                        {`{${attr}}`}
+                      </span>
+                    ))
+                  )}
+                </div>
+
+                {/* Load More / Show Less */}
+                {filteredChips.length > CHIP_INCREMENT && (
+                  <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 4 }}>
+                    {visibleChipCount < filteredChips.length && (
+                      <NeuBtn small onClick={handleLoadMore} icon="▾">
+                        View More ({filteredChips.length - visibleChipCount} remaining)
+                      </NeuBtn>
+                    )}
+                    {visibleChipCount >= filteredChips.length && (
+                      <NeuBtn small danger onClick={handleShowLess} icon="▴">
+                        Show Less
+                      </NeuBtn>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Hint when no attr selected */}
+            {!showInput && (
+              <div style={{
+                padding: "48px 20px", textAlign: "center",
+                fontFamily: "'DM Mono', monospace", fontSize: 13, color: P.warmDrk,
+                fontStyle: "italic", lineHeight: 1.7,
+              }}>
+                <div style={{
+                  width: 56, height: 56, borderRadius: 14, margin: "0 auto 16px",
+                  background: "linear-gradient(145deg, #e2dace, #d0c8b8)", boxShadow: BS.insetDeep,
+                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, opacity: 0.5,
+                }}>🗝</div>
+                Select a source key attribute from the<br/>dropdown above to define its value using chips.
               </div>
             )}
           </div>
         </div>
 
+        {/* ─── Footer ─── */}
         <div style={{
-          padding: "14px 22px", background: "linear-gradient(160deg, #d0c8b8, #c0b8a8)",
-          boxShadow: `${BS.insetSm}, 0 -2px 8px rgba(0,0,0,.1)`, borderTop: "1px solid rgba(0,0,0,.08)",
-          display: "flex", justifyContent: "flex-end", gap: 10, flexShrink: 0,
+          padding: "14px 24px",
+          background: "linear-gradient(160deg, #d0c8b8, #c0b8a8)",
+          boxShadow: `${BS.insetSm}, 0 -2px 8px rgba(0,0,0,.1)`,
+          borderTop: "1px solid rgba(0,0,0,.08)",
+          display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0,
         }}>
-          <NeuBtn small onClick={onClose}>Cancel</NeuBtn>
-          <NeuBtn small accent onClick={handleSave}>Save Keys</NeuBtn>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{
+              width: 8, height: 8, borderRadius: "50%",
+              background: mappedCount > 0 ? P.green : P.warmDrk,
+              boxShadow: mappedCount > 0 ? `0 0 6px ${P.green}` : "none",
+              transition: "all .3s ease",
+            }} />
+            <span style={{
+              fontFamily: "'DM Mono', monospace", fontSize: 11, color: P.warmDrk, letterSpacing: ".04em",
+            }}>
+              {mappedCount} attribute{mappedCount !== 1 ? "s" : ""} mapped
+              {saving ? " · saving…" : ""}
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <NeuBtn small onClick={onClose}>Cancel</NeuBtn>
+            <NeuBtn small accent onClick={onClose} icon="✓">Done</NeuBtn>
+          </div>
         </div>
       </div>
     </div>
@@ -470,6 +892,8 @@ const SourceKeysDialog = ({ skippedColumns, allAttributes, mapping, onMappingCha
    ROWS PER PAGE
 ───────────────────────────────────────── */
 const ROWS_PER_PAGE_OPTIONS = [10, 25, 50];
+const buildCrossFileContextKey = (parentName, customerName, instanceName) =>
+  `crossFileContext_${customerName || ""}__${instanceName || ""}__${parentName || ""}`;
 
 /* ═══════════════════════════════════════════
    MAIN: HDL COMPONENT
@@ -538,6 +962,11 @@ export default function HDL() {
   const showToast = useCallback((message, severity = "info") => {
     setToast({ message, severity, key: Date.now() });
   }, []);
+
+  /* ── Lookup Dialog state ── */
+  const [lookupDialogOpen, setLookupDialogOpen] = useState(false);
+  const [lookupValues, setLookupValues] = useState([]);
+  const [lookupAttr, setLookupAttr] = useState("");
 
   /* ── Refs ── */
   const headerRef = useRef(null);
@@ -834,12 +1263,80 @@ export default function HDL() {
   const pageEnd = Math.min(pageStart + rowsPerPage, totalRows);
   const visibleRows = attributes.slice(pageStart, pageEnd);
 
+  const getCrossFileValidationContext = useCallback(() => {
+    const parentName = selectedNode?.level_6 || selectedNode?.name || "";
+    if (!parentName || !customerName || !instanceName) return null;
+
+    const primaryKey = buildCrossFileContextKey(parentName, customerName, instanceName);
+    const latestKey = sessionStorage.getItem("latestCrossFileContextKey");
+    const keysToTry = [primaryKey, latestKey].filter(Boolean);
+
+    for (const key of keysToTry) {
+      try {
+        const raw = sessionStorage.getItem(key);
+        if (!raw) continue;
+        const parsed = JSON.parse(raw);
+        if (
+          parsed?.parent_name &&
+          parsed?.component_files &&
+          Object.keys(parsed.component_files).length > 0
+        ) {
+          return parsed;
+        }
+      } catch {
+        // ignore malformed cache entries
+      }
+    }
+
+    return null;
+  }, [selectedNode, customerName, instanceName]);
+
   /* ═══════════════════════════════════════
      HELPERS
   ═══════════════════════════════════════ */
   const updateAttr = useCallback((attr, field, val) => {
     setAttributeData(prev => ({ ...prev, [attr]: { ...prev[attr], [field]: val } }));
   }, []);
+
+  const validatePersonNumberCrossFile = useCallback(async () => {
+    const context = getCrossFileValidationContext();
+    if (!context) return null;
+
+    try {
+      const res = await api.post("hdl/bulk/cross-file/personNumber/validate?export_as_excel=true", {
+        parent_name: context.parent_name,
+        component_files: context.component_files,
+        all_mandatory_objects: context.all_mandatory_objects || [],
+        all_non_mandatory_objects: context.all_non_mandatory_objects || [],
+        customerName: customerName || context.customerName || "",
+        InstanceName: instanceName || context.InstanceName || "",
+      });
+
+      const failed = Array.isArray(res.data?.failed_person_numbers) ? res.data.failed_person_numbers : [];
+      const inconsistent = failed.map((row) => ({
+        PersonNumber: row.person_number || "",
+        EffectiveStartDate: "",
+        ActionCode: "",
+        LegalEmployerName: Array.isArray(row.missing_components) ? row.missing_components.join(", ") : "",
+        Scenario: "Missing Mandatory Components",
+        Status: row.description || "",
+      }));
+
+      return {
+        label: "Cross-File Validation",
+        source: "personNumber",
+        message: failed.length
+          ? `Person number validation found ${failed.length} inconsistent record(s).`
+          : "Person number validation passed.",
+        inconsistent_records: inconsistent,
+        status: failed.length > 0 ? "failed" : "success",
+        raw: res.data || null,
+      };
+    } catch (err) {
+      console.error("Cross-file person number validation failed:", err);
+      return null;
+    }
+  }, [getCrossFileValidationContext, customerName, instanceName]);
 
   /* ═══════════════════════════════════════
      TRANSFORM CUSTOMER EXCEL
@@ -894,12 +1391,16 @@ export default function HDL() {
       const res = await api.post("hdl/bulk/cross-file/legalEmployer/validate", formData);
       const recs = res.data.inconsistent_records || [];
       return {
+        label: "Legal Employer Validation",
+        source: "legalEmployer",
         message: res.data.message || "Legal Employer validation completed.",
         inconsistent_records: recs,
         status: recs.length > 0 ? "failed" : "success",
       };
     } catch (err) {
       return {
+        label: "Legal Employer Validation",
+        source: "legalEmployer",
         message: `Error: ${err.response?.data?.detail || err.message}`,
         inconsistent_records: [],
         status: "failed",
@@ -920,8 +1421,9 @@ export default function HDL() {
     setIsValidated(false);
     setValidationResult(null);
 
-    /* 1) Legal employer cross-file validation */
-    const leResult = await validateLegalEmployer();
+    /* 1) Cross-file validation (legacy personNumber API first, legalEmployer fallback) */
+    const pnResult = await validatePersonNumberCrossFile();
+    const leResult = pnResult || await validateLegalEmployer();
 
     /* 2) Read Excel as base64 */
     try {
@@ -978,21 +1480,24 @@ export default function HDL() {
         failed_file_url: res.data.failed_file_url || null,
       };
 
+      let didPass = true;
       if (res.data.status === "failed" || (leResult && leResult.status === "failed")) {
         combined.status = "failed";
         combined.message = "Validation completed with errors.";
         showToast("Validation completed with errors.", "error");
         setIsValidated(false);
+        didPass = false;
       } else {
         showToast("Validation successful!", "success");
         setIsValidated(true);
       }
 
-      /* Update session storage */
+      /* Update session storage & notify sidebar */
       try {
         const sess = JSON.parse(sessionStorage.getItem("validationSession") || "{}");
-        sess[componentName] = { validated: true, fileName: (combined.passed_file_url || "").split("/").pop() };
+        sess[componentName] = { validated: didPass, fileName: (combined.passed_file_url || "").split("/").pop() };
         sessionStorage.setItem("validationSession", JSON.stringify(sess));
+        window.dispatchEvent(new Event("validationSessionUpdated"));
       } catch { /* ignore */ }
 
       setValidationResult(combined);
@@ -1012,7 +1517,7 @@ export default function HDL() {
     }
   }, [attributes, attributeData, allLookups, allMapping, excelFile, componentName, globalBoName,
     sourceKeysMapping, pythonFileName, hireActions, rehireActions, termActions, globalTransferActions,
-    customerName, instanceName, deltaReportFetched, validateLegalEmployer, showToast]);
+    customerName, instanceName, deltaReportFetched, validateLegalEmployer, validatePersonNumberCrossFile, showToast]);
 
   /* ═══════════════════════════════════════
      FETCH DELTA REPORT
@@ -1070,11 +1575,11 @@ export default function HDL() {
       /* ── Step 1: Source Keys ── */
       case 1:
         return (
-          <div style={{ padding: "20px 24px" }}>
+          <div style={{ padding: "20px 24px", textAlign: "center" }}>
             <div style={{ fontFamily: "'Instrument Sans', sans-serif", fontSize: 13, color: P.inkLt, marginBottom: 20, lineHeight: 1.55 }}>
               Define source keys for mapping attributes. These keys map the identifier columns from your DAT file to their values.
             </div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}>
               <NeuBtn accent icon="🗝" onClick={() => setSourceKeysOpen(true)}
                 disabled={!attributes.length}>
                 Open Source Keys Editor
@@ -1094,11 +1599,11 @@ export default function HDL() {
       /* ── Step 2: Transform Excel ── */
       case 2:
         return (
-          <div style={{ padding: "20px 24px" }}>
+          <div style={{ padding: "20px 24px", textAlign: "center" }}>
             <div style={{ fontFamily: "'Instrument Sans', sans-serif", fontSize: 13, color: P.inkLt, marginBottom: 20, lineHeight: 1.55 }}>
               Upload and transform your customer Excel file. This step is <strong>mandatory</strong>.
             </div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}>
               {!excelFile && (
                 <>
                   <input ref={excelFileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }}
@@ -1132,11 +1637,11 @@ export default function HDL() {
       /* ── Step 3: NLP Rules ── */
       case 3:
         return (
-          <div style={{ padding: "20px 24px" }}>
+          <div style={{ padding: "20px 24px", textAlign: "center" }}>
             <div style={{ fontFamily: "'Instrument Sans', sans-serif", fontSize: 13, color: P.inkLt, marginBottom: 20, lineHeight: 1.55 }}>
               Configure NLP rules for intelligent data transformation and field mapping. This step is <em>optional</em>.
             </div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}>
               <NeuBtn accent icon="⚙" onClick={() => showToast("NLP Chat interface coming soon.", "info")}>
                 Open NLP Chat
               </NeuBtn>
@@ -1156,7 +1661,7 @@ export default function HDL() {
       /* ── Step 4: Fetch Oracle / Delta Data ── */
       case 4:
         return (
-          <div style={{ padding: "20px 24px" }}>
+          <div style={{ padding: "20px 24px", textAlign: "center" }}>
             <div style={{ fontFamily: "'Instrument Sans', sans-serif", fontSize: 13, color: P.inkLt, marginBottom: 20, lineHeight: 1.55 }}>
               Fetch Delta Report from Oracle for data integrity checks.
               {componentName?.toLowerCase() !== "assignment" && (
@@ -1165,7 +1670,7 @@ export default function HDL() {
                 </span>
               )}
             </div>
-            <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
               <NeuBtn accent={!deltaReportFetched} success={deltaReportFetched} icon={deltaReportFetched ? "✔" : "🔗"}
                 onClick={handleFetchDeltaReport}
                 disabled={deltaLoading || componentName?.toLowerCase() !== "assignment"}>
@@ -1185,11 +1690,11 @@ export default function HDL() {
       /* ── Step 5: Validate ── */
       case 5:
         return (
-          <div style={{ padding: "20px 24px" }}>
+          <div style={{ padding: "20px 24px", textAlign: "center" }}>
             <div style={{ fontFamily: "'Instrument Sans', sans-serif", fontSize: 13, color: P.inkLt, marginBottom: 20, lineHeight: 1.55 }}>
               Run comprehensive validation checks on all loaded data against HDL requirements.
             </div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "center" }}>
               <NeuBtn accent={!isValidated} success={isValidated} icon={isValidated ? "✔" : "✓"}
                 onClick={handleValidateData}
                 disabled={!attributes.length || validateLoading || !excelFile}>
@@ -1243,7 +1748,7 @@ export default function HDL() {
         {/* ════════════════════════════════
             SECTION 1 — HEADER CARD
         ════════════════════════════════ */}
-        <div style={{ padding: "20px 24px 0" }}>
+        <div style={{ flexShrink: 0 }}>
           <div ref={headerRef}>
             <SectionCard>
               <Screw style={{ top: 10, left: 10 }} angle={45} />
@@ -1318,8 +1823,8 @@ export default function HDL() {
         {/* ════════════════════════════════
             SECTION 2 — ATTRIBUTES TABLE
         ════════════════════════════════ */}
-        <div style={{ padding: "16px 24px 0" }}>
-          <div ref={tableRef}>
+        <div style={{ flexShrink: 0, display: "flex", flexDirection: "column" }}>
+          <div ref={tableRef} style={{ display: "flex", flexDirection: "column" }}>
             <SectionCard style={{ display: "flex", flexDirection: "column" }}>
               {/* Table header */}
               <div style={{
@@ -1347,7 +1852,7 @@ export default function HDL() {
 
               {/* Table */}
               {!loadingAttrs && !datProcessingLoading && totalRows > 0 && (
-                <div className="hdl-table-wrap" style={{ maxHeight: 480, background: "#f8f6f1" }}>
+                <div className="hdl-table-wrap" style={{ overflowX: "auto", background: "#f8f6f1" }}>
                   <table style={{ width: "100%", minWidth: 1060, borderCollapse: "collapse", background: "#ffffff", fontFamily: "'Instrument Sans', sans-serif", fontSize: 13 }}>
                     <thead style={{ position: "sticky", top: 0, zIndex: 2, background: "linear-gradient(180deg, #cfc8b8 0%, #c4bcab 100%)" }}>
                       <tr>
@@ -1381,21 +1886,27 @@ export default function HDL() {
                           }}>
                             <td style={{ padding: "10px 16px", fontFamily: "'DM Mono', monospace", fontSize: 12, color: P.ink }} title={d.helperText || ""}>{attr}</td>
                             <td style={{ padding: "10px 16px", textAlign: "center" }}>
-                              <input className="hdl-check" type="checkbox" checked={Boolean(d.required)} onChange={e => updateAttr(attr, "required", e.target.checked)} />
+                              <NeuToggle checked={Boolean(d.required)} onChange={v => updateAttr(attr, "required", v)} />
                             </td>
                             <td style={{ padding: "10px 16px", textAlign: "center" }}>
-                              <input className="hdl-check" type="checkbox" checked={Boolean(d.keyValues)} onChange={e => updateAttr(attr, "keyValues", e.target.checked)} />
+                              <NeuToggle checked={Boolean(d.keyValues)} onChange={v => updateAttr(attr, "keyValues", v)} />
                             </td>
                             <td style={{ padding: "10px 16px", fontFamily: "'DM Mono', monospace", fontSize: 11, color: P.inkLt }}>{d.dataType || "—"}</td>
                             <td style={{ padding: "10px 16px" }}>
-                              {d.lookupName ? <span className="hdl-lookup-pill">{d.lookupName}</span>
-                                : <span style={{ color: P.warmDrk, fontSize: 12 }}>—</span>}
+                              {d.lookupName ? (
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <span className="hdl-lookup-pill">{d.lookupName}</span>
+                                  <NeuBtn small onClick={() => { setLookupAttr(attr); setLookupValues(d.lookupValues || allLookups[attr] || []); setLookupDialogOpen(true); }} icon="🔎" />
+                                </div>
+                              ) : (
+                                <span style={{ color: P.warmDrk, fontSize: 12 }}>—</span>
+                              )}
                             </td>
                             <td style={{ padding: "10px 16px", fontFamily: "'DM Mono', monospace", fontSize: 11, color: d.transformation ? "#3a6aaa" : P.warmDrk }}>
                               {d.transformation || "—"}
                             </td>
                             <td style={{ padding: "10px 16px", textAlign: "center" }}>
-                              <input className="hdl-check" type="checkbox" checked={d.includeInDat !== false} onChange={e => updateAttr(attr, "includeInDat", e.target.checked)} />
+                              <NeuToggle checked={d.includeInDat !== false} onChange={v => updateAttr(attr, "includeInDat", v)} />
                             </td>
                           </tr>
                         );
@@ -1451,7 +1962,7 @@ export default function HDL() {
         {/* ════════════════════════════════
             SECTION 3 — EXCEL FILES INFO
         ════════════════════════════════ */}
-        <div style={{ padding: "16px 24px 0" }}>
+        <div style={{ flexShrink: 0 }}>
           <SectionCard style={{ background: "linear-gradient(135deg, #dfe8f4 0%, #e8e0f4 100%)" }}>
             <div style={{ padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
               <span style={{ fontSize: 22 }}>📁</span>
@@ -1474,7 +1985,7 @@ export default function HDL() {
         {/* ════════════════════════════════
             SECTION 4 — STEPPER WORKFLOW
         ════════════════════════════════ */}
-        <div style={{ padding: "16px 24px 24px" }}>
+        <div style={{ flexShrink: 0 }}>
           <SectionCard>
             <div style={{ padding: "20px 24px 0" }}>
               <Stepper currentStep={currentStep} completedSteps={completedSteps} onStepClick={s => setCurrentStep(s)} />
@@ -1502,6 +2013,9 @@ export default function HDL() {
             setSourceKeysOpen(false);
             if (currentStep === 1 && Object.keys(sourceKeysMapping).length > 0) stepNext();
           }}
+          selectedComponentName={componentName}
+          customerName={customerName}
+          instanceName={instanceName}
         />
       )}
 
@@ -1511,6 +2025,11 @@ export default function HDL() {
           result={validationResult}
           onClose={() => setValidationDialogOpen(false)}
         />
+      )}
+
+      {/* Lookup Values */}
+      {lookupDialogOpen && (
+        <LookupDialog attr={lookupAttr} values={lookupValues} onClose={() => setLookupDialogOpen(false)} />
       )}
 
       {/* Toast */}

@@ -22,16 +22,18 @@ function AppContent() {
       <Sidebar />
       <div className="main-container">
         {showTopbar && <Topbar />}
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/hierarchy" element={<Hierarchy />} />
-          <Route path="/hdl" element={<HDL />} />
-          <Route path="/config" element={<Configuration />} />
-          <Route path="/post-validation" element={<PostValidation />} />
-          <Route path="/onboarding" element={<Onboarding />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "auto" }}>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/hierarchy" element={<Hierarchy />} />
+            <Route path="/hdl" element={<HDL />} />
+            <Route path="/config" element={<Configuration />} />
+            <Route path="/post-validation" element={<PostValidation />} />
+            <Route path="/onboarding" element={<Onboarding />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </div>
       </div>
     </div>
   );

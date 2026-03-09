@@ -13,3 +13,4 @@ dotenv
 httpx
 psutil
 google-generativeai
+duckdb>=1.0.0

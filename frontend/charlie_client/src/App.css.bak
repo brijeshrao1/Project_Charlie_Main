@@ -1,4 +1,4 @@
-﻿/* ============================================
+/* ============================================
    APP MAIN STYLES
    ============================================ */
 
@@ -196,6 +196,7 @@ body {
   color: #00ff90;
   font-family: monospace;
   font-size: 13px;
+
   box-shadow:
     inset 3px 3px 6px #000000,
     inset -3px -3px 6px #333333;
@@ -212,6 +213,7 @@ body {
   cursor: pointer;
   background: #e0e5ec;
   transition: 0.2s ease;
+
   box-shadow:
     6px 6px 12px #a3b1c6,
     -6px -6px 12px #ffffff;

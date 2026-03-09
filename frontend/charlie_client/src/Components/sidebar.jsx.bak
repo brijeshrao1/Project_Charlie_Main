@@ -198,10 +198,7 @@ const safeGetSessionJSON = (key) => {
   catch { return []; }
 };
 
-const buildCrossFileContextKey = (parentName, customerName, instanceName) =>
-  `crossFileContext_${customerName || ""}__${instanceName || ""}__${parentName || ""}`;
-
-/* Locate the level‐6 ancestor for a given node within the full tree */
+/* Locate the level‑6 ancestor for a given node within the full tree */
 const findLevel6Ancestor = (target, trees) => {
   const walk = (node, depth) => {
     if (depth === 6 && node.name === target.level_6) return node;
@@ -281,7 +278,6 @@ const UploadDialog = ({
   hierarchyData, onClose,
   onValidationUpdate, onBulkValidationUpdate,
   onUploadedParentsChange,
-  onUploadSuccess,
 }) => {
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -403,23 +399,6 @@ const UploadDialog = ({
         }, {});
 
         try {
-          const contextKey = buildCrossFileContextKey(l6Ancestor.name, cName, iName);
-          const contextPayload = {
-            parent_name: l6Ancestor.name,
-            component_files: componentFiles,
-            all_mandatory_objects: allMandatory,
-            all_non_mandatory_objects: allNonMandatory,
-            customerName: cName,
-            InstanceName: iName,
-            savedAt: new Date().toISOString(),
-          };
-          sessionStorage.setItem(contextKey, JSON.stringify(contextPayload));
-          sessionStorage.setItem("latestCrossFileContextKey", contextKey);
-        } catch {
-          // non-blocking: upload flow should continue even if context caching fails
-        }
-
-        try {
           const valRes = await api.post(
             "hdl/bulk/cross-file/personNumber/validate?export_as_excel=true",
             {
@@ -463,9 +442,6 @@ const UploadDialog = ({
       }
 
       setPhase("done");
-
-      /* ── Redirect to /hdl with the uploaded node after success ── */
-      if (onUploadSuccess) onUploadSuccess(node);
     } catch (err) {
       const detail = err.response?.data?.detail || err.message || "Upload failed";
       setError(typeof detail === "string" ? detail : JSON.stringify(detail));
@@ -1148,7 +1124,7 @@ const TreeNode = React.memo(({
   node, parentPath, index, ancestors,
   expandedNodes, toggleNode, treeChildrenRefs,
   customerName, instanceName, navigate, collapsed, level,
-  onUploadClick, onBundleClick, validationSession, uploadedExcelParents, hierarchyData,
+  onUploadClick, onBundleClick, validationSession,
 }) => {
   const nodeId      = `${parentPath}-${index}`;
   const hasChildren = Boolean(node.children?.length);
@@ -1165,7 +1141,7 @@ const TreeNode = React.memo(({
   const upRef   = useRef(null);
   const datRef  = useRef(null);
 
-  const isApiNode = !node.isSynthetic && !["dashboard","setup","pre_upload_parent","hcm_parent","import_load","post_validation"].includes(node.type);
+  const isApiNode = !node.isSynthetic && !["dashboard","setup","pre_upload_parent","import_load","post_validation"].includes(node.type);
 
   const anc      = ancestors || [];
   const customer = anc[0]?.name || node.name;
@@ -1190,42 +1166,15 @@ const TreeNode = React.memo(({
     onBundleClick?.(node);
   }, [node, onBundleClick]);
 
-  /* Clickable HDL node: any non-synthetic node that is 3+ levels below an hcm_parent ancestor */
-  const hcmAncestorIdx = anc.findIndex(a => a.type === "hcm_parent");
-  const depthBelowHcm  = hcmAncestorIdx >= 0 ? (anc.length - hcmAncestorIdx) : -1;
-  const isClickableHdlNode = isApiNode && depthBelowHcm >= 3;
-
   const goLeaf = useCallback(() => {
     if (hasChildren && node.isSynthetic) return;
-    /* Nodes 2+ levels below HCM (e.g. Setup Data, Worker, PersonName) → navigate to /hdl, toggle if has children */
-    if (isClickableHdlNode) {
-      const parentName = node.level_6 || null;
-      if (parentName && (!uploadedExcelParents || !uploadedExcelParents.has(parentName))) {
-        // Parent hasn't uploaded an Excel yet — show the parent in HDL and open its upload dialog
-        const parentNode = findLevel6Ancestor(node, hierarchyData) || { name: parentName };
-        navigate("/hdl", { state: { nodeData: parentNode, customerName, instanceName } });
-        onUploadClick?.(parentNode);
-        return;
-      }
-      navigate("/hdl", { state: { nodeData: node, customerName, instanceName } });
-      if (hasChildren) toggleNode(nodeId);
-      return;
-    }
     if (hasChildren && !node.isSynthetic) { toggleNode(nodeId); return; }
     if (node.type === "dashboard")       { navigate("/dashboard"); return; }
     if (node.type === "setup")           { navigate("/config", { state: { customerName: customer, instanceName: instance } }); return; }
     if (node.type === "import_load")     { navigate("/hdl", { state: { customerName, instanceName } }); return; }
     if (node.type === "post_validation") { navigate("/post-validation", { state: { customerName: customer, instanceName: instance } }); return; }
-    // Final HDL navigation: ensure parent-level upload exists
-    const parentName = node.level_6 || null;
-    if (parentName && (!uploadedExcelParents || !uploadedExcelParents.has(parentName))) {
-      const parentNode = findLevel6Ancestor(node, hierarchyData) || { name: parentName };
-      navigate("/hdl", { state: { nodeData: parentNode, customerName, instanceName } });
-      onUploadClick?.(parentNode);
-      return;
-    }
     navigate("/hdl", { state: { nodeData: node, customerName, instanceName } });
-  }, [hasChildren, node, customer, instance, customerName, instanceName, navigate, toggleNode, nodeId, isClickableHdlNode, uploadedExcelParents, onUploadClick, hierarchyData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hasChildren, node, customer, instance, customerName, instanceName, navigate, toggleNode, nodeId]);
 
   const goConfig = useCallback((e) => {
     e.stopPropagation();
@@ -1478,8 +1427,6 @@ const TreeNode = React.memo(({
               navigate={navigate} collapsed={collapsed} level={level + 1}
               onUploadClick={onUploadClick} onBundleClick={onBundleClick}
               validationSession={validationSession}
-              uploadedExcelParents={uploadedExcelParents}
-              hierarchyData={hierarchyData}
             />
           ))}
         </div>
@@ -1609,19 +1556,6 @@ export default function Sidebar() {
   /* ── Dialog handlers ── */
   const handleUploadClick = useCallback((node) => setUploadNode(node), []);
   const handleBundleClick = useCallback((node) => setBundleNode(node), []);
-
-  /* Close dialogs on Escape key */
-  useEffect(() => {
-    const onKeyDown = (e) => {
-      if (e.key === "Escape" || e.key === "Esc") {
-        // close any open modal dialogs
-        setUploadNode(null);
-        setBundleNode(null);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
 
   /* ── Fetch hierarchy ── */
   useEffect(() => {
@@ -1929,8 +1863,6 @@ export default function Sidebar() {
               onUploadClick={handleUploadClick}
               onBundleClick={handleBundleClick}
               validationSession={validationSession}
-              uploadedExcelParents={uploadedExcelParents}
-              hierarchyData={hierarchyData}
             />
           ))}
         </div>
@@ -2009,10 +1941,6 @@ export default function Sidebar() {
           onValidationUpdate={updateValidationSession}
           onBulkValidationUpdate={updateBulkValidationSession}
           onUploadedParentsChange={handleUploadedParentsChange}
-          onUploadSuccess={(uploadedNode) => {
-            setUploadNode(null);
-            navigate("/hdl", { state: { nodeData: uploadedNode, customerName, instanceName } });
-          }}
         />
       )}
 

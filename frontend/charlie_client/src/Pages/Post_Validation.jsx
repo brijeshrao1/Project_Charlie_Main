@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { gsap } from "gsap";
+/* eslint-disable no-unused-vars */
 import { Box, Card, Typography, Button, Grid, CircularProgress } from "@mui/material";
+/* eslint-enable no-unused-vars */
 import api from "../services/api";
 
 /* ─────────────────────────────────────────
@@ -39,28 +41,54 @@ const GLOBAL_CSS = `
   select {
     appearance: none;
     -webkit-appearance: none;
+    -moz-appearance: none;
     font-family: 'DM Mono', monospace;
-    font-size: 12px;
-    letter-spacing: .02em;
-    background: var(--cream-dk);
+    font-size: 11px;
+    letter-spacing: .03em;
+    background: linear-gradient(145deg, #ddd6c6, #c8bfad);
     color: var(--ink);
-    border: none;
+    border: 1px solid rgba(0,0,0,.08);
     outline: none;
     cursor: pointer;
     width: 100%;
-    padding: 8px 30px 8px 10px;
-    border-radius: 8px;
+    padding: 9px 32px 9px 12px;
+    border-radius: 10px;
     box-shadow:
-      inset 4px 4px 10px rgba(0,0,0,.3),
-      inset -3px -3px 8px rgba(255,255,255,.7);
+      inset 3px 3px 8px rgba(0,0,0,.22),
+      inset -2px -2px 6px rgba(255,255,255,.6);
+    transition: box-shadow .2s ease, border-color .2s ease;
+  }
+  select:focus {
+    border-color: var(--copper);
+    box-shadow:
+      inset 3px 3px 8px rgba(0,0,0,.22),
+      inset -2px -2px 6px rgba(255,255,255,.6),
+      0 0 0 2px rgba(184,115,51,.18);
+  }
+  select:hover {
+    border-color: rgba(0,0,0,.18);
+  }
+  select option {
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    background: #e8e2d4;
+    color: var(--ink);
+    padding: 6px 10px;
+  }
+  select option:checked {
+    background: linear-gradient(135deg, #d4935f, #b87333);
+    color: #faf4e8;
   }
 
-  ::-webkit-scrollbar { width: 8px; }
-  ::-webkit-scrollbar-track { background: var(--cream-dk); }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
   ::-webkit-scrollbar-thumb {
     background: var(--warm-drk);
-    border-radius: 4px;
-    box-shadow: inset 2px 2px 4px rgba(0,0,0,.3);
+    border-radius: 3px;
+    box-shadow: inset 1px 1px 3px rgba(0,0,0,.3);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--leather);
   }
 `;
 
@@ -72,13 +100,16 @@ if (!document.getElementById("pvs-css")) {
 }
 
 /* ─────────────────────────────────────────
-   DIAL LOADER
+   NEUMORPHIC VALIDATION LOADER — digital instrument panel
 ───────────────────────────────────────── */
-const DialLoader = ({ progress, show }) => {
-  const overlayRef = useRef(null);
-  const needleRef  = useRef(null);
-  const numRef     = useRef(null);
-  const tickRefs   = useRef([]);
+const ValidationLoader = ({ progress, show, stage = "", eta }) => {
+  const overlayRef  = useRef(null);
+  const numRef      = useRef(null);
+  const barFillRef  = useRef(null);
+  const segRefs     = useRef([]);
+  const dotRefs     = useRef([]);
+  const scanRef     = useRef(null);
+  const glowRef     = useRef(null);
 
   useEffect(() => {
     if (!overlayRef.current) return;
@@ -87,124 +118,637 @@ const DialLoader = ({ progress, show }) => {
         { opacity: 0 },
         { opacity: 1, duration: .4, ease: "power2.out" }
       );
+      /* scanline animation */
+      if (scanRef.current) {
+        gsap.fromTo(scanRef.current,
+          { top: "-2%" },
+          { top: "100%", duration: 3, repeat: -1, ease: "none" }
+        );
+      }
     } else {
       gsap.to(overlayRef.current, { opacity: 0, duration: .35, ease: "power2.in" });
+      if (scanRef.current) gsap.killTweensOf(scanRef.current);
     }
   }, [show]);
 
   useEffect(() => {
-    if (!show || !needleRef.current) return;
-    const angle = -135 + progress * 2.7;
-    gsap.to(needleRef.current, {
-      rotation: angle,
-      duration: .5,
-      ease: "elastic.out(1,.6)",
-      transformOrigin: "50% 85%"
+    if (!show) return;
+
+    /* number counter */
+    if (numRef.current) {
+      gsap.to(numRef.current, {
+        innerText: progress,
+        duration: .5, snap: { innerText: 1 }, ease: "none",
+      });
+    }
+
+    /* segmented bar fill */
+    if (barFillRef.current) {
+      gsap.to(barFillRef.current, {
+        width: `${progress}%`,
+        duration: .55, ease: "power2.out",
+      });
+    }
+
+    /* screen glow intensifies */
+    if (glowRef.current) {
+      gsap.to(glowRef.current, {
+        opacity: .15 + (progress / 100) * .45,
+        duration: .6, ease: "power2.out",
+      });
+    }
+
+    /* LED segment bars */
+    const SEG_COUNT = 20;
+    segRefs.current.forEach((seg, i) => {
+      if (!seg) return;
+      const threshold = ((i + 1) / SEG_COUNT) * 100;
+      const active = progress >= threshold;
+      const color = i < 14 ? "#b87333" : i < 17 ? "#d4935f" : "#c0392b";
+      gsap.to(seg, {
+        background: active ? color : "rgba(44,36,32,.08)",
+        boxShadow: active ? `0 0 6px ${color}80` : "none",
+        opacity: active ? 1 : .35,
+        duration: .2, ease: "power1.out", delay: i * .015,
+      });
     });
-    gsap.to(numRef.current, {
-      innerText: progress,
-      duration: .4,
-      snap: { innerText: 1 },
-      ease: "none"
-    });
-    tickRefs.current.forEach((t, i) => {
-      if (!t) return;
-      gsap.to(t, {
-        opacity: i / 36 <= progress / 100 ? 1 : .2,
-        duration: .15,
-        delay: i * .004,
-        ease: "none"
+
+    /* step dots */
+    const thresholds = [0, 20, 40, 60, 80, 100];
+    dotRefs.current.forEach((dot, i) => {
+      if (!dot) return;
+      const active = progress >= thresholds[i];
+      gsap.to(dot, {
+        background: active
+          ? "linear-gradient(135deg, #c8843a, #7a4e28)"
+          : "linear-gradient(145deg, #d0c8b8, #bfb7a7)",
+        boxShadow: active
+          ? "0 0 10px rgba(184,115,51,.6), 3px 3px 8px rgba(0,0,0,.4)"
+          : "inset 2px 2px 5px rgba(0,0,0,.25), inset -1px -1px 3px rgba(255,255,255,.6)",
+        scale: active ? 1.15 : 1,
+        duration: .3, ease: "back.out(2)", delay: i * .04,
       });
     });
   }, [progress, show]);
 
-  const ticks = Array.from({ length: 37 }, (_, i) => i);
+  const dotLabels = ["Upload", "Parse", "Compare", "Analyze", "Report", "Done"];
+  const SEG_COUNT = 20;
 
   return (
     <div ref={overlayRef} style={{
       position: "fixed", inset: 0, zIndex: 9999,
-      background: "rgba(224,218,206,.75)",
-      backdropFilter: "blur(8px)",
+      background: "rgba(44,36,32,.55)",
+      backdropFilter: "blur(18px)",
+      WebkitBackdropFilter: "blur(18px)",
       display: "flex", alignItems: "center", justifyContent: "center",
       pointerEvents: show ? "all" : "none",
       opacity: 0,
     }}>
+      {/* ── Instrument-panel card ── */}
       <div style={{
-        width: 260, height: 260,
-        borderRadius: "50%",
-        background: "linear-gradient(145deg, #e8e0d0, #cec5b5)",
-        boxShadow: "20px 20px 50px rgba(0,0,0,.5), -12px -12px 35px rgba(255,255,255,.9), inset 0 0 0 3px rgba(255,255,255,.4)",
+        width: 400, padding: "48px 40px 40px",
+        borderRadius: 30,
+        background: "linear-gradient(160deg, #e8e2d4 0%, #cec6b4 50%, #c4bba8 100%)",
+        boxShadow:
+          "30px 30px 80px rgba(0,0,0,.55), " +
+          "-16px -16px 45px rgba(255,255,255,.85), " +
+          "inset 0 2px 0 rgba(255,255,255,.5), " +
+          "inset 0 -1px 0 rgba(0,0,0,.12)",
+        border: "1px solid rgba(255,255,255,.3)",
+        display: "flex", flexDirection: "column", alignItems: "center",
         position: "relative",
-        display: "flex", alignItems: "center", justifyContent: "center",
       }}>
-        {/* Tick marks */}
-        {ticks.map((i) => {
-          const angle = -135 + i * (270 / 36);
-          const rad = angle * Math.PI / 180;
-          const r = 110;
-          const x = 130 + r * Math.sin(rad);
-          const y = 130 - r * Math.cos(rad);
-          const isMajor = i % 9 === 0;
-          return (
-            <div key={i} ref={el => tickRefs.current[i] = el} style={{
-              position: "absolute",
-              left: x - (isMajor ? 2 : 1),
-              top:  y - (isMajor ? 8 : 5),
-              width: isMajor ? 4 : 2,
-              height: isMajor ? 14 : 8,
-              background: i / 36 <= progress / 100 ? "var(--copper)" : "var(--warm-drk)",
-              borderRadius: 2,
-              transform: `rotate(${angle}deg)`,
-              transformOrigin: "50% 50%",
-              opacity: .3,
-            }} />
-          );
-        })}
 
-        {/* Inner bowl */}
+        {/* brass corner rivets with cross-slot */}
+        {[{top:16,left:16},{top:16,right:16},{bottom:16,left:16},{bottom:16,right:16}].map((pos,i) => (
+          <div key={i} style={{
+            position: "absolute", ...pos,
+            width: 13, height: 13, borderRadius: "50%",
+            background: "linear-gradient(135deg, #d4a95f, #8b6f4e, #c89b50)",
+            boxShadow: "2px 2px 5px rgba(0,0,0,.45), -1px -1px 3px rgba(255,255,255,.4), inset 0 1px 1px rgba(255,255,255,.3)",
+          }}>
+            <div style={{ position: "absolute", top: "50%", left: "50%", width: "65%", height: 1.5,
+              background: "rgba(0,0,0,.35)", transform: "translate(-50%,-50%)" }} />
+            <div style={{ position: "absolute", top: "50%", left: "50%", width: "65%", height: 1.5,
+              background: "rgba(0,0,0,.35)", transform: "translate(-50%,-50%) rotate(90deg)" }} />
+          </div>
+        ))}
+
+        {/* etched label plate */}
         <div style={{
-          width: 170, height: 170, borderRadius: "50%",
-          background: "linear-gradient(145deg, #d8d0c0, #e4ddd0)",
-          boxShadow: "inset 8px 8px 20px rgba(0,0,0,.4), inset -6px -6px 18px rgba(255,255,255,.8)",
-          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          position: "relative", zIndex: 2,
+          fontFamily: "'DM Mono', monospace",
+          fontSize: 8, fontWeight: 500, letterSpacing: ".25em", textTransform: "uppercase",
+          color: "var(--ink-lt)",
+          padding: "4px 14px", borderRadius: 4, marginBottom: 18,
+          background: "linear-gradient(145deg, #d8d0c0, #e0d8c8)",
+          boxShadow: "inset 1px 1px 3px rgba(0,0,0,.2), inset -1px -1px 2px rgba(255,255,255,.5)",
+          border: "1px solid rgba(0,0,0,.06)",
+        }}>VALIDATION ENGINE</div>
+
+        {/* ── Digital LCD Screen ── */}
+        <div style={{
+          position: "relative", width: "100%",
+          borderRadius: 14,
+          background: "linear-gradient(165deg, #1a1812 0%, #252018 50%, #1e1a14 100%)",
+          boxShadow:
+            "inset 5px 5px 18px rgba(0,0,0,.7), " +
+            "inset -3px -3px 10px rgba(255,255,255,.04), " +
+            "3px 3px 10px rgba(0,0,0,.3), " +
+            "-2px -2px 6px rgba(255,255,255,.15)",
+          border: "2px solid rgba(0,0,0,.25)",
+          padding: "28px 24px 22px",
+          marginBottom: 20,
+          overflow: "hidden",
         }}>
-          <div ref={numRef} style={{
-            fontFamily: "'DM Serif Display', serif",
-            fontSize: 46, fontWeight: 400, color: "var(--ink)", lineHeight: 1,
-          }}>0</div>
+          {/* screen glow */}
+          <div ref={glowRef} style={{
+            position: "absolute", inset: 0,
+            borderRadius: 12,
+            background: "radial-gradient(ellipse at 50% 40%, rgba(184,115,51,.15) 0%, transparent 70%)",
+            opacity: .15, pointerEvents: "none",
+          }} />
+
+          {/* subtle scanline */}
+          <div ref={scanRef} style={{
+            position: "absolute", left: 0, right: 0,
+            height: "8%", top: "-2%",
+            background: "linear-gradient(180deg, transparent, rgba(184,115,51,.06), transparent)",
+            pointerEvents: "none",
+          }} />
+
+          {/* subtle grid texture */}
+          <div style={{
+            position: "absolute", inset: 0, borderRadius: 12,
+            backgroundImage:
+              "linear-gradient(rgba(255,255,255,.015) 1px, transparent 1px), " +
+              "linear-gradient(90deg, rgba(255,255,255,.015) 1px, transparent 1px)",
+            backgroundSize: "8px 8px",
+            pointerEvents: "none",
+          }} />
+
+          {/* ── Top bar: sys label + status LED ── */}
+          <div style={{
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+            marginBottom: 16, position: "relative",
+          }}>
+            <div style={{
+              fontFamily: "'DM Mono', monospace",
+              fontSize: 7, letterSpacing: ".3em", textTransform: "uppercase",
+              color: "rgba(184,115,51,.4)",
+            }}>SYS:ACTIVE</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <div style={{
+                width: 5, height: 5, borderRadius: "50%",
+                background: progress > 0 ? "#27ae60" : "#b87333",
+                boxShadow: progress > 0
+                  ? "0 0 8px rgba(39,174,96,.7)"
+                  : "0 0 6px rgba(184,115,51,.5)",
+                animation: progress > 0 && progress < 100 ? "none" : "none",
+              }} />
+              <div style={{
+                fontFamily: "'DM Mono', monospace",
+                fontSize: 7, letterSpacing: ".2em", textTransform: "uppercase",
+                color: progress > 0 ? "rgba(39,174,96,.6)" : "rgba(184,115,51,.4)",
+              }}>{progress >= 100 ? "DONE" : progress > 0 ? "RUNNING" : "IDLE"}</div>
+            </div>
+          </div>
+
+          {/* ── Big digital percentage ── */}
+          <div style={{
+            display: "flex", alignItems: "baseline", justifyContent: "center",
+            gap: 4, marginBottom: 14, position: "relative",
+          }}>
+            <div ref={numRef} style={{
+              fontFamily: "'DM Mono', monospace",
+              fontSize: 56, fontWeight: 500, color: "#d4935f",
+              lineHeight: 1,
+              textShadow: "0 0 20px rgba(184,115,51,.5), 0 0 40px rgba(184,115,51,.2)",
+              letterSpacing: ".06em",
+            }}>0</div>
+            <span style={{
+              fontFamily: "'DM Mono', monospace",
+              fontSize: 18, color: "rgba(184,115,51,.5)", fontWeight: 400,
+            }}>%</span>
+          </div>
+
+          {/* ── Stage readout line ── */}
           <div style={{
             fontFamily: "'DM Mono', monospace",
-            fontSize: 10, letterSpacing: ".15em", textTransform: "uppercase",
-            color: "var(--ink-lt)", marginTop: 4,
-          }}>Processing</div>
+            fontSize: 10, letterSpacing: ".18em", textTransform: "uppercase",
+            color: "rgba(212,147,95,.55)",
+            textAlign: "center", marginBottom: 16,
+            textShadow: "0 0 8px rgba(184,115,51,.3)",
+          }}>
+            {">"} {stage || "Initializing..."}
+          </div>
+
+          {/* ── Segmented LED bar ── */}
           <div style={{
-            width: 6, height: 6, borderRadius: "50%", marginTop: 10,
-            background: "var(--copper)",
-            boxShadow: "0 0 8px var(--copper), 0 0 20px var(--copper-lt)",
+            display: "flex", gap: 3, width: "100%", height: 14,
+            padding: "3px 4px",
+            borderRadius: 5,
+            background: "rgba(0,0,0,.3)",
+            boxShadow: "inset 2px 2px 6px rgba(0,0,0,.5), inset -1px -1px 3px rgba(255,255,255,.02)",
+          }}>
+            {Array.from({ length: SEG_COUNT }).map((_, i) => (
+              <div key={i} ref={el => segRefs.current[i] = el} style={{
+                flex: 1, borderRadius: 2,
+                background: "rgba(44,36,32,.08)",
+                opacity: .35,
+                transition: "none",
+              }} />
+            ))}
+          </div>
+
+          {/* ── Bottom stats row ── */}
+          <div style={{
+            display: "flex", justifyContent: "space-between", marginTop: 14,
+            position: "relative",
+          }}>
+            {[
+              { label: "ETA", value: progress >= 100 ? "00:00" : (eta != null && eta > 0) ? `${Math.floor(eta / 60)}:${String(Math.floor(eta % 60)).padStart(2, '0')}` : progress > 0 ? "calc..." : "--:--" },
+              { label: "PROC", value: `${Math.min(progress, 100)}%` },
+              { label: "MEM", value: "OK" },
+            ].map((stat) => (
+              <div key={stat.label} style={{ textAlign: "center" }}>
+                <div style={{
+                  fontFamily: "'DM Mono', monospace",
+                  fontSize: 7, letterSpacing: ".2em",
+                  color: "rgba(184,115,51,.35)",
+                }}>{stat.label}</div>
+                <div style={{
+                  fontFamily: "'DM Mono', monospace",
+                  fontSize: 10, letterSpacing: ".08em",
+                  color: "rgba(212,147,95,.6)",
+                  textShadow: "0 0 6px rgba(184,115,51,.25)",
+                  marginTop: 2,
+                }}>{stat.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Brass progress bar ── */}
+        <div style={{
+          width: "100%", height: 8, borderRadius: 4,
+          background: "linear-gradient(145deg, #c0b8a6, #d0c8b8)",
+          boxShadow: "inset 3px 3px 8px rgba(0,0,0,.35), inset -2px -2px 5px rgba(255,255,255,.55)",
+          overflow: "hidden", marginBottom: 24, position: "relative",
+        }}>
+          <div ref={barFillRef} style={{
+            height: "100%", width: "0%", borderRadius: 4,
+            background: "linear-gradient(90deg, #d4a95f, #b87333, #8b6f4e)",
+            boxShadow: "0 0 10px rgba(184,115,51,.5), inset 0 1px 1px rgba(255,255,255,.3)",
+            transition: "none",
           }} />
         </div>
 
-        {/* Needle */}
-        <div ref={needleRef} style={{
-          position: "absolute",
-          width: 5, height: 95,
-          background: "linear-gradient(to top, var(--copper), var(--ink))",
-          borderRadius: "3px 3px 0 0",
-          bottom: "50%", left: "calc(50% - 2.5px)",
-          transformOrigin: "50% 85%",
-          transform: "rotate(-135deg)",
-          zIndex: 3,
-          boxShadow: "0 0 6px rgba(0,0,0,.6)",
-        }} />
-
-        {/* Center knob */}
+        {/* ── Step dots ── */}
         <div style={{
-          position: "absolute", width: 20, height: 20, borderRadius: "50%",
-          background: "linear-gradient(145deg, #c8b89a, #a09070)",
-          boxShadow: "4px 4px 10px rgba(0,0,0,.5), -2px -2px 6px rgba(255,255,255,.4)",
-          zIndex: 4,
-        }} />
+          display: "flex", justifyContent: "space-between",
+          width: "100%", padding: "0 8px",
+        }}>
+          {dotLabels.map((label, i) => (
+            <div key={label} style={{
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+            }}>
+              <div ref={el => dotRefs.current[i] = el} style={{
+                width: 14, height: 14, borderRadius: "50%",
+                background: "linear-gradient(145deg, #d0c8b8, #bfb7a7)",
+                boxShadow: "inset 2px 2px 5px rgba(0,0,0,.25), inset -1px -1px 3px rgba(255,255,255,.6)",
+              }} />
+              <span style={{
+                fontFamily: "'DM Mono', monospace",
+                fontSize: 7, letterSpacing: ".1em", textTransform: "uppercase",
+                color: "var(--ink-lt)",
+              }}>{label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ─────────────────────────────────────────
+   GEMINI AI MAPPING LOADER — neumorphic brass instrument panel
+───────────────────────────────────────── */
+const GeminiLoader = ({ progress, show, stage = "", eta }) => {
+  const overlayRef  = useRef(null);
+  const numRef      = useRef(null);
+  const barFillRef  = useRef(null);
+  const segRefs     = useRef([]);
+  const dotRefs     = useRef([]);
+  const scanRef     = useRef(null);
+  const glowRef     = useRef(null);
+
+  useEffect(() => {
+    if (!overlayRef.current) return;
+    if (show) {
+      gsap.fromTo(overlayRef.current,
+        { opacity: 0 },
+        { opacity: 1, duration: .4, ease: "power2.out" }
+      );
+      if (scanRef.current) {
+        gsap.fromTo(scanRef.current,
+          { top: "-2%" },
+          { top: "100%", duration: 3, repeat: -1, ease: "none" }
+        );
+      }
+    } else {
+      gsap.to(overlayRef.current, { opacity: 0, duration: .35, ease: "power2.in" });
+      if (scanRef.current) gsap.killTweensOf(scanRef.current);
+    }
+  }, [show]);
+
+  useEffect(() => {
+    if (!show) return;
+
+    if (numRef.current) {
+      gsap.to(numRef.current, {
+        innerText: progress,
+        duration: .5, snap: { innerText: 1 }, ease: "none",
+      });
+    }
+
+    if (barFillRef.current) {
+      gsap.to(barFillRef.current, {
+        width: `${progress}%`,
+        duration: .55, ease: "power2.out",
+      });
+    }
+
+    if (glowRef.current) {
+      gsap.to(glowRef.current, {
+        opacity: .15 + (progress / 100) * .45,
+        duration: .6, ease: "power2.out",
+      });
+    }
+
+    const SEG_COUNT = 20;
+    segRefs.current.forEach((seg, i) => {
+      if (!seg) return;
+      const threshold = ((i + 1) / SEG_COUNT) * 100;
+      const active = progress >= threshold;
+      const color = i < 14 ? "#b87333" : i < 17 ? "#d4935f" : "#c0392b";
+      gsap.to(seg, {
+        background: active ? color : "rgba(44,36,32,.08)",
+        boxShadow: active ? `0 0 6px ${color}80` : "none",
+        opacity: active ? 1 : .35,
+        duration: .2, ease: "power1.out", delay: i * .015,
+      });
+    });
+
+    const thresholds = [0, 25, 50, 100];
+    dotRefs.current.forEach((dot, i) => {
+      if (!dot) return;
+      const active = progress >= thresholds[i];
+      gsap.to(dot, {
+        background: active
+          ? "linear-gradient(135deg, #c8843a, #7a4e28)"
+          : "linear-gradient(145deg, #d0c8b8, #bfb7a7)",
+        boxShadow: active
+          ? "0 0 10px rgba(184,115,51,.6), 3px 3px 8px rgba(0,0,0,.4)"
+          : "inset 2px 2px 5px rgba(0,0,0,.25), inset -1px -1px 3px rgba(255,255,255,.6)",
+        scale: active ? 1.15 : 1,
+        duration: .3, ease: "back.out(2)", delay: i * .04,
+      });
+    });
+  }, [progress, show]);
+
+  const dotLabels = ["Reading", "Parsing", "Mapping", "Done"];
+  const SEG_COUNT = 20;
+
+  return (
+    <div ref={overlayRef} style={{
+      position: "fixed", inset: 0, zIndex: 9999,
+      background: "rgba(44,36,32,.55)",
+      backdropFilter: "blur(18px)",
+      WebkitBackdropFilter: "blur(18px)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      pointerEvents: show ? "all" : "none",
+      opacity: 0,
+    }}>
+      {/* ── Instrument-panel card ── */}
+      <div style={{
+        width: 400, padding: "48px 40px 40px",
+        borderRadius: 30,
+        background: "linear-gradient(160deg, #e8e2d4 0%, #cec6b4 50%, #c4bba8 100%)",
+        boxShadow:
+          "30px 30px 80px rgba(0,0,0,.55), " +
+          "-16px -16px 45px rgba(255,255,255,.85), " +
+          "inset 0 2px 0 rgba(255,255,255,.5), " +
+          "inset 0 -1px 0 rgba(0,0,0,.12)",
+        border: "1px solid rgba(255,255,255,.3)",
+        display: "flex", flexDirection: "column", alignItems: "center",
+        position: "relative",
+      }}>
+
+        {/* brass corner rivets */}
+        {[{top:16,left:16},{top:16,right:16},{bottom:16,left:16},{bottom:16,right:16}].map((pos,i) => (
+          <div key={i} style={{
+            position: "absolute", ...pos,
+            width: 13, height: 13, borderRadius: "50%",
+            background: "linear-gradient(135deg, #d4a95f, #8b6f4e, #c89b50)",
+            boxShadow: "2px 2px 5px rgba(0,0,0,.45), -1px -1px 3px rgba(255,255,255,.4), inset 0 1px 1px rgba(255,255,255,.3)",
+          }}>
+            <div style={{ position: "absolute", top: "50%", left: "50%", width: "65%", height: 1.5,
+              background: "rgba(0,0,0,.35)", transform: "translate(-50%,-50%)" }} />
+            <div style={{ position: "absolute", top: "50%", left: "50%", width: "65%", height: 1.5,
+              background: "rgba(0,0,0,.35)", transform: "translate(-50%,-50%) rotate(90deg)" }} />
+          </div>
+        ))}
+
+        {/* etched label plate */}
+        <div style={{
+          fontFamily: "'DM Mono', monospace",
+          fontSize: 8, fontWeight: 500, letterSpacing: ".25em", textTransform: "uppercase",
+          color: "var(--ink-lt)",
+          padding: "4px 14px", borderRadius: 4, marginBottom: 18,
+          background: "linear-gradient(145deg, #d8d0c0, #e0d8c8)",
+          boxShadow: "inset 1px 1px 3px rgba(0,0,0,.2), inset -1px -1px 2px rgba(255,255,255,.5)",
+          border: "1px solid rgba(0,0,0,.06)",
+        }}>✦ GEMINI AI MAPPING</div>
+
+        {/* ── Digital LCD Screen ── */}
+        <div style={{
+          position: "relative", width: "100%",
+          borderRadius: 14,
+          background: "linear-gradient(165deg, #1a1812 0%, #252018 50%, #1e1a14 100%)",
+          boxShadow:
+            "inset 5px 5px 18px rgba(0,0,0,.7), " +
+            "inset -3px -3px 10px rgba(255,255,255,.04), " +
+            "3px 3px 10px rgba(0,0,0,.3), " +
+            "-2px -2px 6px rgba(255,255,255,.15)",
+          border: "2px solid rgba(0,0,0,.25)",
+          padding: "28px 24px 22px",
+          marginBottom: 20,
+          overflow: "hidden",
+        }}>
+          {/* screen glow */}
+          <div ref={glowRef} style={{
+            position: "absolute", inset: 0,
+            borderRadius: 12,
+            background: "radial-gradient(ellipse at 50% 40%, rgba(184,115,51,.15) 0%, transparent 70%)",
+            opacity: .15, pointerEvents: "none",
+          }} />
+
+          {/* scanline */}
+          <div ref={scanRef} style={{
+            position: "absolute", left: 0, right: 0,
+            height: "8%", top: "-2%",
+            background: "linear-gradient(180deg, transparent, rgba(184,115,51,.06), transparent)",
+            pointerEvents: "none",
+          }} />
+
+          {/* grid texture */}
+          <div style={{
+            position: "absolute", inset: 0, borderRadius: 12,
+            backgroundImage:
+              "linear-gradient(rgba(255,255,255,.015) 1px, transparent 1px), " +
+              "linear-gradient(90deg, rgba(255,255,255,.015) 1px, transparent 1px)",
+            backgroundSize: "8px 8px",
+            pointerEvents: "none",
+          }} />
+
+          {/* top bar */}
+          <div style={{
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+            marginBottom: 16, position: "relative",
+          }}>
+            <div style={{
+              fontFamily: "'DM Mono', monospace",
+              fontSize: 7, letterSpacing: ".3em", textTransform: "uppercase",
+              color: "rgba(184,115,51,.4)",
+            }}>AI:GEMINI</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <div style={{
+                width: 5, height: 5, borderRadius: "50%",
+                background: progress > 0 ? "#27ae60" : "#b87333",
+                boxShadow: progress > 0
+                  ? "0 0 8px rgba(39,174,96,.7)"
+                  : "0 0 6px rgba(184,115,51,.5)",
+              }} />
+              <div style={{
+                fontFamily: "'DM Mono', monospace",
+                fontSize: 7, letterSpacing: ".2em", textTransform: "uppercase",
+                color: progress > 0 ? "rgba(39,174,96,.6)" : "rgba(184,115,51,.4)",
+              }}>{progress >= 100 ? "DONE" : progress > 0 ? "MAPPING" : "IDLE"}</div>
+            </div>
+          </div>
+
+          {/* big digital percentage */}
+          <div style={{
+            display: "flex", alignItems: "baseline", justifyContent: "center",
+            gap: 4, marginBottom: 14, position: "relative",
+          }}>
+            <div ref={numRef} style={{
+              fontFamily: "'DM Mono', monospace",
+              fontSize: 56, fontWeight: 500, color: "#d4935f",
+              lineHeight: 1,
+              textShadow: "0 0 20px rgba(184,115,51,.5), 0 0 40px rgba(184,115,51,.2)",
+              letterSpacing: ".06em",
+            }}>0</div>
+            <span style={{
+              fontFamily: "'DM Mono', monospace",
+              fontSize: 18, color: "rgba(184,115,51,.5)", fontWeight: 400,
+            }}>%</span>
+          </div>
+
+          {/* stage readout */}
+          <div style={{
+            fontFamily: "'DM Mono', monospace",
+            fontSize: 10, letterSpacing: ".18em", textTransform: "uppercase",
+            color: "rgba(212,147,95,.55)",
+            textAlign: "center", marginBottom: 16,
+            textShadow: "0 0 8px rgba(184,115,51,.3)",
+          }}>
+            {">"} {stage || "Connecting to Gemini..."}
+          </div>
+
+          {/* segmented LED bar */}
+          <div style={{
+            display: "flex", gap: 3, width: "100%", height: 14,
+            padding: "3px 4px",
+            borderRadius: 5,
+            background: "rgba(0,0,0,.3)",
+            boxShadow: "inset 2px 2px 6px rgba(0,0,0,.5), inset -1px -1px 3px rgba(255,255,255,.02)",
+          }}>
+            {Array.from({ length: SEG_COUNT }).map((_, i) => (
+              <div key={i} ref={el => segRefs.current[i] = el} style={{
+                flex: 1, borderRadius: 2,
+                background: "rgba(44,36,32,.08)",
+                opacity: .35,
+                transition: "none",
+              }} />
+            ))}
+          </div>
+
+          {/* bottom stats row */}
+          <div style={{
+            display: "flex", justifyContent: "space-between", marginTop: 14,
+            position: "relative",
+          }}>
+            {[
+              { label: "ETA", value: progress >= 100 ? "00:00" : (eta != null && eta > 0) ? `${Math.floor(eta / 60)}:${String(Math.floor(eta % 60)).padStart(2, '0')}` : progress > 0 ? "calc..." : "--:--" },
+              { label: "PROC", value: `${Math.min(progress, 100)}%` },
+              { label: "MEM", value: "OK" },
+            ].map((stat) => (
+              <div key={stat.label} style={{ textAlign: "center" }}>
+                <div style={{
+                  fontFamily: "'DM Mono', monospace",
+                  fontSize: 7, letterSpacing: ".2em",
+                  color: "rgba(184,115,51,.35)",
+                }}>{stat.label}</div>
+                <div style={{
+                  fontFamily: "'DM Mono', monospace",
+                  fontSize: 10, letterSpacing: ".08em",
+                  color: "rgba(212,147,95,.6)",
+                  textShadow: "0 0 6px rgba(184,115,51,.25)",
+                  marginTop: 2,
+                }}>{stat.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* brass progress bar */}
+        <div style={{
+          width: "100%", height: 8, borderRadius: 4,
+          background: "linear-gradient(145deg, #c0b8a6, #d0c8b8)",
+          boxShadow: "inset 3px 3px 8px rgba(0,0,0,.35), inset -2px -2px 5px rgba(255,255,255,.55)",
+          overflow: "hidden", marginBottom: 24, position: "relative",
+        }}>
+          <div ref={barFillRef} style={{
+            height: "100%", width: "0%", borderRadius: 4,
+            background: "linear-gradient(90deg, #d4a95f, #b87333, #8b6f4e)",
+            boxShadow: "0 0 10px rgba(184,115,51,.5), inset 0 1px 1px rgba(255,255,255,.3)",
+            transition: "none",
+          }} />
+        </div>
+
+        {/* step dots */}
+        <div style={{
+          display: "flex", justifyContent: "space-between",
+          width: "100%", padding: "0 28px",
+        }}>
+          {dotLabels.map((label, i) => (
+            <div key={label} style={{
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+            }}>
+              <div ref={el => dotRefs.current[i] = el} style={{
+                width: 14, height: 14, borderRadius: "50%",
+                background: "linear-gradient(145deg, #d0c8b8, #bfb7a7)",
+                boxShadow: "inset 2px 2px 5px rgba(0,0,0,.25), inset -1px -1px 3px rgba(255,255,255,.6)",
+              }} />
+              <span style={{
+                fontFamily: "'DM Mono', monospace",
+                fontSize: 7, letterSpacing: ".1em", textTransform: "uppercase",
+                color: "var(--ink-lt)",
+              }}>{label}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -327,7 +871,7 @@ const DropZone = ({ label, file, onFile, inputRef }) => {
       onDragEnter={enter}
       onDragOver={e => e.preventDefault()}
       onDragLeave={leave}
-      onDrop={e => { e.preventDefault(); leave(); const f = e.dataTransfer.files[0]; if (f?.name.endsWith(".xlsx")) onFile(f); }}
+      onDrop={e => { e.preventDefault(); leave(); const f = e.dataTransfer.files[0]; if (f && (f.name.endsWith(".xlsx") || f.name.endsWith(".csv"))) onFile(f); }}
       style={{
         flex: 1, padding: "40px 24px", textAlign: "center",
         borderRadius: 16, cursor: "pointer",
@@ -381,7 +925,7 @@ const DropZone = ({ label, file, onFile, inputRef }) => {
         }}>drop .xlsx · click to browse</div>
       )}
 
-      <input ref={inputRef} type="file" accept=".xlsx" hidden
+      <input ref={inputRef} type="file" accept=".xlsx,.csv" hidden
         onChange={e => { const f = e.target.files[0]; if (f) onFile(f); }} />
     </div>
   );
@@ -394,6 +938,7 @@ const StepperHeader = ({ active }) => {
   const steps = ["Upload Files", "Review Mapping"];
   return (
     <div style={{ display: "flex", alignItems: "center", marginBottom: 44 }}>
+
       {steps.map((s, i) => (
         <React.Fragment key={s}>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
@@ -443,18 +988,86 @@ export default function PostValidationStepper() {
   const [activeStep,    setActiveStep]    = useState(0);
   const [legacyFile,    setLegacyFile]    = useState(null);
   const [oracleFile,    setOracleFile]    = useState(null);
+  const [configFile,    setConfigFile]    = useState(null);
+  const [configData,    setConfigData]    = useState(null);
   const [rows,          setRows]          = useState([]);
   const [targetOptions, setTargetOptions] = useState([]);
   const [loading,       setLoading]       = useState(false);
+  const [loaderType,    setLoaderType]    = useState("validation"); // "validation" | "gemini"
   const [progress,      setProgress]      = useState(0);
+  const [stage,         setStage]         = useState("");
+  const [eta,            setEta]            = useState(null);
   const [error,         setError]         = useState("");
+  const [outputAsZip,   setOutputAsZip]   = useState(false);
 
   const cardRef     = useRef(null);
   const step1Ref    = useRef(null);
   const step2Ref    = useRef(null);
   const sourceInput = useRef();
   const targetInput = useRef();
+  const configInput = useRef();
   const rowRefs     = useRef([]);
+
+  /* ── Config file handler ── */
+  const handleConfigUpload = useCallback((file) => {
+    if (!file) return;
+    setConfigFile(file);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = JSON.parse(e.target.result);
+        setConfigData(parsed);
+      } catch {
+        setError("Invalid config file — must be valid JSON.");
+        setConfigFile(null);
+        setConfigData(null);
+      }
+    };
+    reader.onerror = () => {
+      setError("Failed to read config file.");
+      setConfigFile(null);
+    };
+    reader.readAsText(file);
+  }, []);
+
+  /* ── Save current config ── */
+  const handleSaveConfig = useCallback(() => {
+    const keys = rows.filter(r => r.isKey).map(r => r.source);
+    const mappings = {};
+    rows.forEach(r => {
+      if (r.target && r.target.trim() !== "") mappings[r.source] = r.target;
+    });
+    const dateColumns    = rows.filter(r => r.isDate).map(r => r.source);
+    const validateCols   = rows.filter(r => r.validate).map(r => r.source);
+    const includeCols    = rows.filter(r => r.include).map(r => r.source);
+
+    const config = {
+      customerName: configData?.customerName || "default",
+      instanceName: configData?.instanceName || "default",
+      mappings,
+      keyColumns: keys,
+      dateColumns,
+      validateColumns: validateCols,
+      includeColumns: includeCols,
+      outputAsZip,
+      ...(configData?.hireActions       && { hireActions: configData.hireActions }),
+      ...(configData?.rehireActions      && { rehireActions: configData.rehireActions }),
+      ...(configData?.termActions        && { termActions: configData.termActions }),
+      ...(configData?.globalTransferActions && { globalTransferActions: configData.globalTransferActions }),
+      ...(configData?.statusTypes        && { statusTypes: configData.statusTypes }),
+      ...(configData?.assignmentStatusRules && { assignmentStatusRules: configData.assignmentStatusRules }),
+    };
+
+    const blob = new Blob([JSON.stringify(config, null, 2)], { type: "application/json" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = `${config.customerName}_${config.instanceName}_config.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, [rows, outputAsZip, configData]);
 
   /* Card entrance */
   useEffect(() => {
@@ -496,15 +1109,6 @@ export default function PostValidationStepper() {
     );
   }, [activeStep, rows]);
 
-  const simulateProgress = () => new Promise(res => {
-    let p = 15;
-    const id = setInterval(() => {
-      p += Math.random() * 12 + 3;
-      if (p >= 95) { clearInterval(id); res(); return; }
-      setProgress(Math.round(p));
-    }, 180);
-  });
-
 const runMapping = async () => {
   if (!legacyFile || !oracleFile) {
     setError("Please upload both files.");
@@ -512,75 +1116,119 @@ const runMapping = async () => {
   }
 
   setError("");
+  setLoaderType("gemini");
   setLoading(true);
-  setProgress(5);
+  setProgress(0);
+  setStage("Uploading files");
 
   try {
+    /* ── Step 1: Upload files → get job_id ── */
     const form = new FormData();
     form.append("legacyFile", legacyFile);
     form.append("oracleFile", oracleFile);
     form.append("legacySheet", "");
     form.append("oracleSheet", "");
-    form.append("customerName", "default");
-    form.append("instanceName", "default");
+    form.append("customerName", configData?.customerName || "default");
+    form.append("instanceName", configData?.instanceName || "default");
+    if (configFile) form.append("configFile", configFile);
+    if (configData) form.append("configData", JSON.stringify(configData));
 
     let lastUpdate = 0;
 
-    const res = await api.post(
+    const submitRes = await api.post(
       "/excel/columns/mapping",
       form,
       {
         onUploadProgress: e => {
           if (!e.total) return;
-
           const now = Date.now();
           if (now - lastUpdate < 100) return;
           lastUpdate = now;
-
-          const percent = Math.round((e.loaded * 100) / e.total);
-          requestAnimationFrame(() => setProgress(percent));
+          const pct = Math.round((e.loaded * 100) / e.total);
+          // Upload is 0–5% of total progress
+          const mappedPct = Math.round(pct * 0.05);
+          requestAnimationFrame(() => {
+            setProgress(mappedPct);
+            setStage("Uploading files");
+          });
         }
       }
     );
 
-    /* simulate backend thinking phase */
-    await simulateProgress();
+    const jobId = submitRes.data?.job_id;
+    if (!jobId) throw new Error("No job_id returned from server");
 
-    /* ---------- SAFE RESPONSE PARSE ---------- */
+    /* ── Step 2: Poll for real progress ── */
+    setProgress(5);
+    setStage("Processing");
 
-    const legacyCols = Array.isArray(res.data?.legacy_columns)
-      ? res.data.legacy_columns
-      : [];
+    const result = await new Promise((resolve, reject) => {
+      const poll = async () => {
+        try {
+          const { data } = await api.get(`/excel/columns/mapping/status/${jobId}`);
 
-    const oracleCols = Array.isArray(res.data?.oracle_columns)
-      ? res.data.oracle_columns
-      : [];
+          setProgress(data.progress || 0);
+          if (data.stage) setStage(data.stage);
+          if (data.eta_seconds != null) setEta(data.eta_seconds);
 
-    const suggested = res.data?.suggested_mapping || {};
-    const dateCols = res.data?.date_columns || [];
+          if (data.status === "complete") {
+            resolve(data.result);
+          } else if (data.status === "failed") {
+            reject(new Error(data.error || "Mapping failed"));
+          } else {
+            setTimeout(poll, 600);
+          }
+        } catch (pollErr) {
+          reject(pollErr);
+        }
+      };
+      poll();
+    });
+
+    /* ── Step 3: Parse result ── */
+    const legacyCols = Array.isArray(result?.legacy_columns)
+      ? result.legacy_columns : [];
+    const oracleCols = Array.isArray(result?.oracle_columns)
+      ? result.oracle_columns : [];
+    const suggested = result?.suggested_mapping || {};
+    const dateCols = result?.date_columns || [];
 
     if (!legacyCols.length || !oracleCols.length)
       throw new Error("Invalid API response");
 
-    /* ---------- STATE SET ---------- */
-
+    /* ── Step 4: Set state ── */
     setTargetOptions(oracleCols);
+    /* Apply config overrides if available */
+    const cfgMappings     = configData?.mappings         || {};
+    const cfgKeys         = configData?.keyColumns        || [];
+    const cfgDateCols     = configData?.dateColumns       || [];
+    const cfgValidateCols = configData?.validateColumns   || [];
+    const cfgIncludeCols  = configData?.includeColumns    || [];
+    const hasConfigOverride = Object.keys(cfgMappings).length > 0;
 
     setRows(
-      legacyCols.map((col, i) => ({
-        id: i,
-        source: col,
-        target: suggested[col] || oracleCols[0] || "",
-        isKey: false,
-        isDate: dateCols.includes(col),
-        validate: true,
-        include: false
-      }))
+      legacyCols.map((col, i) => {
+        /* Config overrides Gemini suggestions when present */
+        const mappedTarget = hasConfigOverride
+          ? (cfgMappings[col] != null ? cfgMappings[col] : "")
+          : (suggested[col] != null ? suggested[col] : "");
+        const hasMapping = mappedTarget !== "";
+        return {
+          id: i,
+          source: col,
+          target: mappedTarget,
+          isKey:     cfgKeys.includes(col),
+          isDate:    hasConfigOverride ? cfgDateCols.includes(col) : dateCols.includes(col),
+          validate:  hasConfigOverride ? cfgValidateCols.includes(col) : hasMapping,
+          include:   cfgIncludeCols.includes(col),
+        };
+      })
     );
 
-    /* ---------- SUCCESS ---------- */
+    if (configData?.outputAsZip != null) setOutputAsZip(configData.outputAsZip);
 
     setProgress(100);
+    setStage("Done");
 
     setTimeout(() => {
       setLoading(false);
@@ -589,21 +1237,21 @@ const runMapping = async () => {
     }, 400);
 
   } catch (err) {
-
     console.error("Mapping error:", err);
 
     if (err.response) {
       const code = err.response.status;
-
       if (code === 400) setError("Invalid Excel format");
       else if (code === 422) setError("Missing required fields");
       else if (code === 500) setError("Server processing error");
       else setError("Unexpected server error");
-    }
-    else if (err.request)
+    } else if (err.message) {
+      setError(err.message);
+    } else if (err.request) {
       setError("Server not reachable");
-    else
+    } else {
       setError("Request failed");
+    }
 
     setLoading(false);
   }
@@ -629,18 +1277,36 @@ const handleValidate = async () => {
     return;
   }
 
+  // Check that all key columns have valid target mappings
+  const keysWithoutMapping = rows.filter(r => r.isKey && (!r.target || r.target.trim() === ""));
+  if (keysWithoutMapping.length > 0) {
+    setError(`Key column(s) missing target mapping: ${keysWithoutMapping.map(r => r.source).join(", ")}`);
+    return;
+  }
+
   try {
+    setLoaderType("validation");
     setLoading(true);
-    setProgress(10);
+    setProgress(0);
+    setStage("Uploading files");
+    setError("");
+
+    // Only include rows that have a mapping AND validate is enabled
+    const activeRows = rows.filter(r => r.validate && r.target && r.target.trim() !== "");
+
+    if (activeRows.length === 0) {
+      setError("No columns to validate. Assign target mappings and enable Validate.");
+      return;
+    }
 
     const mappings = {};
-    rows.forEach(r => {
+    activeRows.forEach(r => {
       mappings[r.source] = r.target;
     });
 
-    const includedColumns = rows.filter(r => r.include).map(r => r.source);
-    const dateColumns = rows.filter(r => r.isDate).map(r => r.source);
-    const validateColumns = rows.filter(r => r.validate).map(r => r.source);
+    const includedColumns = activeRows.filter(r => r.include).map(r => r.source);
+    const dateColumns = activeRows.filter(r => r.isDate).map(r => r.source);
+    const validateColumns = activeRows.map(r => r.source);
 
     const form = new FormData();
 
@@ -649,8 +1315,10 @@ const handleValidate = async () => {
     form.append("oracleFile", oracleFile);
 
     /* REQUIRED META */
-    form.append("customerName", "default");
-    form.append("instanceName", "default");
+    form.append("customerName", configData?.customerName || "default");
+    form.append("instanceName", configData?.instanceName || "default");
+    if (configFile) form.append("configFile", configFile);
+    if (configData) form.append("configData", JSON.stringify(configData));
 
     /* ARRAYS + OBJECTS (STRINGIFIED JSON) */
     form.append("mappings", JSON.stringify(mappings));
@@ -664,29 +1332,89 @@ const handleValidate = async () => {
     /* OPTIONAL */
     form.append("legacySheet", "");
     form.append("oracleSheet", "");
-    form.append("includeSourceTargetFiles", false);
+    form.append("includeSourceTargetFiles", !outputAsZip);
+    form.append("outputAsZip", outputAsZip);
 
-    const res = await api.post(
-      "/excel/post_validation/validate",
+    /* ── Step 1: Submit job ── */
+    const submitRes = await api.post(
+      "/excel/post_validation/validate_large",
       form,
       {
-        responseType: "blob",   // ⭐ REQUIRED
+        timeout: 300000, // 5 min for upload
         onUploadProgress: e => {
           if (!e.total) return;
-          const percent = Math.round((e.loaded * 100) / e.total);
-          setProgress(percent);
+          const pct = Math.min(Math.round((e.loaded * 100) / e.total), 100);
+          // Upload progress shown as 0-2% (small relative to processing)
+          setProgress(Math.round(pct * 0.02));
+          setStage("Uploading files");
         }
       }
     );
 
-    /* -------- DOWNLOAD FILE -------- */
+    const { job_id } = submitRes.data;
+    if (!job_id) throw new Error("No job_id returned from server");
 
-    const blob = new Blob([res.data]);
+    /* ── Step 2: Poll for progress ── */
+    setStage("Processing started");
+    setProgress(2);
 
-    // try to read filename from backend header
-    let filename = "validated.xlsx";
-    const disposition = res.headers["content-disposition"];
+    const POLL_INTERVAL = 1500; // 1.5 seconds
+    const MAX_POLL_TIME = 30 * 60 * 1000; // 30 minutes
+    const pollStart = Date.now();
 
+    const pollStatus = () => new Promise((resolve, reject) => {
+      const interval = setInterval(async () => {
+        try {
+          if (Date.now() - pollStart > MAX_POLL_TIME) {
+            clearInterval(interval);
+            reject(new Error("Validation timed out after 30 minutes"));
+            return;
+          }
+
+          const statusRes = await api.get(
+            `/excel/post_validation/status/${job_id}`,
+            { timeout: 10000 }
+          );
+
+          const { status, progress: jobProgress, stage: jobStage, error: jobError } = statusRes.data;
+
+          setProgress(jobProgress || 0);
+          setStage(jobStage || "");
+          if (statusRes.data.eta_seconds != null) setEta(statusRes.data.eta_seconds);
+
+          if (status === "complete") {
+            clearInterval(interval);
+            resolve();
+          } else if (status === "failed") {
+            clearInterval(interval);
+            reject(new Error(jobError || "Validation failed on the server"));
+          }
+          // status === "running" → keep polling
+        } catch (pollErr) {
+          // Network blip — don't stop polling, just log
+          console.warn("Poll error (will retry):", pollErr.message);
+        }
+      }, POLL_INTERVAL);
+    });
+
+    await pollStatus();
+
+    /* ── Step 3: Download result ── */
+    setStage("Downloading results");
+
+    const downloadRes = await api.get(
+      `/excel/post_validation/download/${job_id}`,
+      {
+        responseType: "blob",
+        timeout: 600000, // 10 min for large file download
+      }
+    );
+
+    const contentType = downloadRes.headers["content-type"] || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    const blob = new Blob([downloadRes.data], { type: contentType });
+
+    let filename = "MythicsValidationResults.xlsx";
+    const disposition = downloadRes.headers["content-disposition"];
     if (disposition && disposition.includes("filename=")) {
       filename = disposition
         .split("filename=")[1]
@@ -696,51 +1424,57 @@ const handleValidate = async () => {
 
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement("a");
-
     link.href = url;
     link.download = filename;
     document.body.appendChild(link);
     link.click();
-
     link.remove();
     window.URL.revokeObjectURL(url);
 
-
     setProgress(100);
-    console.log("VALIDATION RESULT:", res.data);
+    setStage("Complete");
 
   } catch (err) {
     console.error(err);
-    setError("Validation failed");
+    setError(err.message || "Validation failed");
   } finally {
     setLoading(false);
+    setTimeout(() => { setStage(""); }, 2000);
   }
 };
 
 
   const grid = {
     display: "grid",
-    gridTemplateColumns: "1.8fr 1.8fr 60px 60px 72px 72px",
+    gridTemplateColumns: "minmax(160px, 1.5fr) minmax(180px, 1.5fr) 56px 56px 56px 56px",
     alignItems: "center",
-    gap: 8,
+    gap: "0 12px",
   };
 
   return (
     <>
-      <DialLoader progress={progress} show={loading} />
+      {loaderType === "gemini"
+        ? <GeminiLoader progress={progress} show={loading} stage={stage} eta={eta} />
+        : <ValidationLoader progress={progress} show={loading} stage={stage} eta={eta} />
+      }
 
       <div style={{
-        minHeight: "100vh",
+        flex: 1,
+        minHeight: 0,
+        overflowY: "auto",
         padding: "48px 32px",
         background: `
           radial-gradient(ellipse at 20% 10%, rgba(184,115,51,.07) 0%, transparent 55%),
           radial-gradient(ellipse at 80% 90%, rgba(90,100,117,.07) 0%, transparent 55%),
           #dfd8cc
         `,
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "flex-start",
       }}>
         <div ref={cardRef} style={{
-          maxWidth: 980,
-          margin: "0 auto",
+          width: "100%",
+          maxWidth: 1080,
           padding: 52,
           borderRadius: 24,
           background: "linear-gradient(160deg, #ede8dc 0%, #d8d0c0 100%)",
@@ -778,11 +1512,71 @@ const handleValidate = async () => {
             <div style={{
               fontFamily: "'DM Mono', monospace",
               fontSize: 12, color: "var(--ink-lt)", letterSpacing: ".05em", marginBottom: 38,
-            }}>Provide source (legacy) and target (oracle) .xlsx spreadsheets to begin mapping</div>
+            }}>Provide source (legacy) and target (oracle) .xlsx or .csv files to begin mapping</div>
 
-            <div style={{ display: "flex", gap: 24, marginBottom: 36 }}>
+            <div style={{ display: "flex", gap: 24, marginBottom: 28 }}>
               <DropZone label="Source File" file={legacyFile} onFile={setLegacyFile} inputRef={sourceInput} />
               <DropZone label="Target File" file={oracleFile} onFile={setOracleFile} inputRef={targetInput} />
+            </div>
+
+            {/* ── Optional Config Upload ── */}
+            <div
+              onClick={() => configInput.current?.click()}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f && f.name.endsWith(".json")) handleConfigUpload(f); }}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "14px 22px", borderRadius: 14, cursor: "pointer",
+                background: "linear-gradient(145deg, #e2dace, #d4cbbe)",
+                boxShadow: "inset 2px 2px 6px rgba(0,0,0,.12), inset -2px -2px 5px rgba(255,255,255,.55), 4px 4px 12px rgba(0,0,0,.15), -3px -3px 8px rgba(255,255,255,.6)",
+                border: configFile
+                  ? "1px solid rgba(39,174,96,.35)"
+                  : "1px dashed rgba(0,0,0,.12)",
+                marginBottom: 28,
+                transition: "border-color .25s, box-shadow .25s",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: 10,
+                  background: configFile
+                    ? "linear-gradient(135deg, rgba(39,174,96,.15), rgba(39,174,96,.08))"
+                    : "linear-gradient(145deg, #d0c8b8, #c4baa8)",
+                  boxShadow: configFile
+                    ? "inset 1px 1px 3px rgba(0,0,0,.1)"
+                    : "inset 2px 2px 5px rgba(0,0,0,.2), inset -1px -1px 3px rgba(255,255,255,.45)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  flexShrink: 0,
+                }}>
+                  <span style={{ fontSize: 16 }}>{configFile ? "✓" : "⚙"}</span>
+                </div>
+                <div>
+                  <div style={{
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 10, fontWeight: 600, letterSpacing: ".1em", textTransform: "uppercase",
+                    color: "var(--ink)", marginBottom: 2,
+                  }}>Configuration File <span style={{ fontWeight: 400, color: "var(--warm-drk)" }}>(optional)</span></div>
+                  <div style={{
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 9, color: configFile ? "#27ae60" : "var(--warm-drk)", letterSpacing: ".04em",
+                  }}>{configFile ? configFile.name : "Upload a .json config to pre-fill mappings & settings"}</div>
+                </div>
+              </div>
+              {configFile && (
+                <div
+                  onClick={(e) => { e.stopPropagation(); setConfigFile(null); setConfigData(null); }}
+                  style={{
+                    fontFamily: "'DM Mono', monospace", fontSize: 9,
+                    color: "var(--active)", cursor: "pointer",
+                    padding: "4px 10px", borderRadius: 6,
+                    background: "rgba(192,57,43,.08)",
+                    border: "1px solid rgba(192,57,43,.15)",
+                    letterSpacing: ".06em", textTransform: "uppercase",
+                  }}
+                >Remove</div>
+              )}
+              <input ref={configInput} type="file" accept=".json" hidden
+                onChange={e => { const f = e.target.files[0]; if (f) handleConfigUpload(f); e.target.value = ""; }} />
             </div>
 
             <div style={{
@@ -811,95 +1605,188 @@ const handleValidate = async () => {
 
           {/* STEP 2 */}
           <div ref={step2Ref} style={{ display: "none" }}>
-            <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 28 }}>
+            {/* ── Title row ── */}
+            <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
               <div>
                 <div style={{
                   fontFamily: "'DM Serif Display', serif",
-                  fontSize: 30, marginBottom: 6, color: "var(--ink)",
+                  fontSize: 28, marginBottom: 4, color: "var(--ink)",
+                  lineHeight: 1.2,
                 }}>Column Configuration</div>
                 <div style={{
                   fontFamily: "'DM Mono', monospace",
-                  fontSize: 11, color: "var(--ink-lt)", letterSpacing: ".06em",
+                  fontSize: 10, color: "var(--warm-drk)", letterSpacing: ".06em",
                 }}>
                   {rows.length} columns · {rows.filter(r => r.isKey).length} key{rows.filter(r=>r.isKey).length !== 1 ? "s" : ""} selected
+                  {configData && (
+                    <span style={{ color: "#27ae60", marginLeft: 8 }}>· config loaded</span>
+                  )}
                 </div>
               </div>
 
               {/* Legend */}
-              <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
+              <div style={{
+                display: "flex", gap: 14, alignItems: "center",
+                padding: "6px 16px", borderRadius: 10,
+                background: "linear-gradient(145deg, #ddd6c6, #cec5b5)",
+                boxShadow: "inset 2px 2px 5px rgba(0,0,0,.15), inset -1px -1px 3px rgba(255,255,255,.5)",
+              }}>
                 {[["Key","#b87333"],["Date","#5a6475"],["Validate","#27ae60"],["Include","#c0392b"]].map(([l,c]) => (
                   <div key={l} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                    <div style={{ width: 7, height: 7, borderRadius: "50%", background: c, boxShadow: `0 0 5px ${c}` }} />
-                    <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: "var(--ink-lt)", letterSpacing: ".08em", textTransform: "uppercase" }}>{l}</span>
+                    <div style={{
+                      width: 6, height: 6, borderRadius: "50%", background: c,
+                      boxShadow: `0 0 6px ${c}55`,
+                    }} />
+                    <span style={{
+                      fontFamily: "'DM Mono', monospace", fontSize: 8,
+                      color: "var(--ink-lt)", letterSpacing: ".1em", textTransform: "uppercase",
+                      fontWeight: 500,
+                    }}>{l}</span>
                   </div>
                 ))}
               </div>
             </div>
 
+            {/* ── Save Config bar (above table) ── */}
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              marginBottom: 16,
+              padding: "10px 18px", borderRadius: 12,
+              background: "linear-gradient(145deg, #e0d8c8, #d2cab8)",
+              boxShadow: "4px 4px 12px rgba(0,0,0,.18), -3px -3px 8px rgba(255,255,255,.65)",
+              border: "1px solid rgba(255,255,255,.25)",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 14 }}>💾</span>
+                <div>
+                  <div style={{
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 9, fontWeight: 600, letterSpacing: ".1em", textTransform: "uppercase",
+                    color: "var(--ink)",
+                  }}>Save Configuration</div>
+                  <div style={{
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 8, color: "var(--warm-drk)", letterSpacing: ".04em",
+                  }}>Export current mappings & toggles as reusable JSON config</div>
+                </div>
+              </div>
+              <button
+                onClick={handleSaveConfig}
+                disabled={rows.length === 0}
+                style={{
+                  fontFamily: "'Instrument Sans', sans-serif",
+                  fontWeight: 700, fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase",
+                  padding: "8px 20px", borderRadius: 8, border: "none", cursor: rows.length === 0 ? "not-allowed" : "pointer",
+                  color: "#f8f0e0",
+                  background: "linear-gradient(135deg, #5a6475, #3d4654)",
+                  boxShadow: rows.length === 0 ? "none" : "5px 5px 14px rgba(0,0,0,.35), -2px -2px 8px rgba(255,255,255,.4)",
+                  opacity: rows.length === 0 ? .5 : 1,
+                  transition: "opacity .2s, transform .15s",
+                }}
+                onMouseDown={e => { if (rows.length > 0) e.currentTarget.style.transform = "scale(0.96)"; }}
+                onMouseUp={e => { e.currentTarget.style.transform = "scale(1)"; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; }}
+              >Save Config ↓</button>
+            </div>
+
             {/* Table */}
             <div style={{
-              borderRadius: 14,
-              background: "linear-gradient(160deg, #d0c8b8, #c0b8a8)",
-              boxShadow: "inset 6px 6px 18px rgba(0,0,0,.38), inset -4px -4px 14px rgba(255,255,255,.55)",
+              borderRadius: 16,
+              background: "linear-gradient(160deg, #d6cebb, #c5bcaa)",
+              boxShadow: "inset 5px 5px 16px rgba(0,0,0,.32), inset -3px -3px 12px rgba(255,255,255,.5)",
               overflow: "hidden",
+              border: "1px solid rgba(255,255,255,.18)",
             }}>
               {/* Header */}
               <div style={{
                 ...grid,
-                padding: "14px 20px",
-                background: "rgba(0,0,0,.08)",
-                borderBottom: "1px solid rgba(0,0,0,.12)",
+                padding: "13px 24px",
+                background: "linear-gradient(180deg, rgba(0,0,0,.1) 0%, rgba(0,0,0,.05) 100%)",
+                borderBottom: "1px solid rgba(0,0,0,.1)",
               }}>
                 {["Source Column","Target Column","Key","Date","Validate","Include"].map(h => (
                   <div key={h} style={{
                     fontFamily: "'DM Mono', monospace",
-                    fontSize: 9, fontWeight: 500, letterSpacing: ".14em",
-                    textTransform: "uppercase", color: "var(--ink-lt)",
-                    textAlign: h.length <= 7 ? "center" : "left",
+                    fontSize: 8, fontWeight: 600, letterSpacing: ".16em",
+                    textTransform: "uppercase",
+                    color: "var(--warm-drk)",
+                    textAlign: (h === "Source Column" || h === "Target Column") ? "left" : "center",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: (h === "Source Column" || h === "Target Column") ? "flex-start" : "center",
+                    overflow: "hidden",
+                    whiteSpace: "nowrap",
+                    textOverflow: "ellipsis",
+                    minWidth: 0,
                   }}>{h}</div>
                 ))}
               </div>
 
               {/* Rows */}
-              <div style={{ maxHeight: 400, overflowY: "auto" }}>
+              <div style={{ maxHeight: 420, overflowY: "auto" }}>
                 {rows.map((r, idx) => (
                   <div
                     key={r.id}
                     ref={el => rowRefs.current[idx] = el}
+                    className="pvs-row"
                     style={{
                       ...grid,
-                      padding: "11px 20px",
-                      borderBottom: "1px solid rgba(0,0,0,.06)",
+                      padding: "10px 24px",
+                      borderBottom: "1px solid rgba(0,0,0,.045)",
+                      background: idx % 2 === 0 ? "transparent" : "rgba(0,0,0,.022)",
+                      transition: "background .15s ease",
                     }}
+                    onMouseEnter={e => { e.currentTarget.style.background = "rgba(184,115,51,.055)"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = idx % 2 === 0 ? "transparent" : "rgba(0,0,0,.022)"; }}
                   >
-                    <div style={{
-                      fontFamily: "'DM Mono', monospace",
-                      fontSize: 12, color: "var(--ink)",
-                      letterSpacing: ".03em",
-                      display: "flex", alignItems: "center", gap: 8,
-                    }}>
+                    {/* Source column name */}
+                    <div
+                      title={r.source}
+                      style={{
+                        fontFamily: "'DM Mono', monospace",
+                        fontSize: 11, color: "var(--ink)",
+                        letterSpacing: ".03em",
+                        display: "flex", alignItems: "center", gap: 8,
+                        overflow: "hidden", whiteSpace: "nowrap",
+                        minWidth: 0,
+                      }}
+                    >
                       <div style={{
                         width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-                        background: r.isKey ? "var(--copper)" : "rgba(0,0,0,.15)",
-                        boxShadow: r.isKey ? "0 0 7px var(--copper)" : "none",
+                        background: r.isKey ? "var(--copper)" : "rgba(0,0,0,.12)",
+                        boxShadow: r.isKey ? "0 0 8px var(--copper)" : "none",
                         transition: "all .25s",
                       }} />
-                      {r.source}
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{r.source}</span>
                     </div>
 
-                    <div style={{ position: "relative" }}>
-                      <select value={r.target} onChange={e => updateRow(r.id, "target", e.target.value)}>
+                    {/* Target dropdown */}
+                    <div style={{ position: "relative", minWidth: 0, overflow: "hidden" }}>
+                      <select
+                        value={r.target}
+                        title={r.target || "(no mapping)"}
+                        onChange={e => {
+                          const val = e.target.value;
+                          updateRow(r.id, "target", val);
+                          if (val === "") updateRow(r.id, "validate", false);
+                          else if (!r.validate) updateRow(r.id, "validate", true);
+                        }}
+                        style={{ textOverflow: "ellipsis" }}
+                      >
+                        <option value="">(ignore — no mapping)</option>
                         {targetOptions.map(t => <option key={t} value={t}>{t}</option>)}
                       </select>
                       <div style={{
-                        position: "absolute", right: 10, top: "50%",
+                        position: "absolute", right: 12, top: "50%",
                         transform: "translateY(-50%)",
-                        pointerEvents: "none", color: "var(--ink-lt)", fontSize: 10,
+                        pointerEvents: "none", color: "var(--warm-drk)", fontSize: 9,
+                        lineHeight: 1,
                       }}>▾</div>
                     </div>
 
+                    {/* Toggle switches */}
                     {[["isKey","#b87333"],["isDate","#5a6475"],["validate","#27ae60"],["include","#c0392b"]].map(([field,color]) => (
-                      <div key={field} style={{ display: "flex", justifyContent: "center" }}>
+                      <div key={field} style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
                         <Toggle active={r[field]} onClick={() => updateRow(r.id, field, !r[field])} color={color} />
                       </div>
                     ))}
@@ -919,14 +1806,64 @@ const handleValidate = async () => {
               }}>{error}</div>
             )}
 
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 32, alignItems: "center" }}>
-              <NeuBtn onClick={() => transitionToStep(0)}>← Back</NeuBtn>
-              <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+            {/* Output format toggle */}
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              marginTop: 24,
+              padding: "14px 20px", borderRadius: 12,
+              background: "linear-gradient(145deg, #ddd6c6, #cec5b5)",
+              boxShadow: "inset 2px 2px 6px rgba(0,0,0,.18), inset -2px -2px 5px rgba(255,255,255,.55)",
+              border: "1px solid rgba(255,255,255,.2)",
+            }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <div style={{
                   fontFamily: "'DM Mono', monospace",
-                  fontSize: 11, color: "var(--ink-lt)", letterSpacing: ".05em",
+                  fontSize: 10, fontWeight: 600, letterSpacing: ".12em",
+                  textTransform: "uppercase",
+                  color: "var(--ink)",
+                }}>Output Format</div>
+                <div style={{
+                  fontFamily: "'DM Mono', monospace",
+                  fontSize: 9, color: "var(--warm-drk)", letterSpacing: ".04em",
                 }}>
-                  {rows.filter(r => r.validate).length} of {rows.length} cols to validate
+                  {outputAsZip
+                    ? "Separate files bundled as .zip"
+                    : "All results in a single .xlsx file"}
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{
+                  fontFamily: "'DM Mono', monospace",
+                  fontSize: 9, letterSpacing: ".08em", textTransform: "uppercase",
+                  color: !outputAsZip ? "var(--ink)" : "var(--warm-drk)",
+                  fontWeight: !outputAsZip ? 600 : 400,
+                  transition: "color .25s, font-weight .25s",
+                }}>Single File</span>
+                <Toggle active={outputAsZip} onClick={() => setOutputAsZip(z => !z)} color="var(--steel)" />
+                <span style={{
+                  fontFamily: "'DM Mono', monospace",
+                  fontSize: 9, letterSpacing: ".08em", textTransform: "uppercase",
+                  color: outputAsZip ? "var(--ink)" : "var(--warm-drk)",
+                  fontWeight: outputAsZip ? 600 : 400,
+                  transition: "color .25s, font-weight .25s",
+                }}>Zip Bundle</span>
+              </div>
+            </div>
+
+            <div style={{
+              display: "flex", justifyContent: "space-between", marginTop: 20,
+              alignItems: "center", flexWrap: "wrap", gap: 12,
+            }}>
+              <NeuBtn onClick={() => transitionToStep(0)}>← Back</NeuBtn>
+              <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
+                <div style={{
+                  fontFamily: "'DM Mono', monospace",
+                  fontSize: 10, color: "var(--warm-drk)", letterSpacing: ".06em",
+                  padding: "5px 14px", borderRadius: 8,
+                  background: "rgba(0,0,0,.04)",
+                  border: "1px solid rgba(0,0,0,.06)",
+                }}>
+                  {rows.filter(r => r.validate && r.target && r.target.trim() !== "").length} of {rows.length} cols to validate · {rows.filter(r => !r.target || r.target.trim() === "").length} ignored
                 </div>
                 <NeuBtn onClick={handleValidate} accent>Validate Mapping ✓</NeuBtn>
               </div>

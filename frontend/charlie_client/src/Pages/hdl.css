@@ -1,0 +1,654 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600;700&display=swap');
+
+/* ─────────────────────────────────────────
+   CSS VARIABLES — mirrors Dashboard tokens
+───────────────────────────────────────── */
+:root {
+  --hdl-warmDrk:  #a09283;
+  --hdl-copper:   #b87333;
+  --hdl-copperLt: #d4935f;
+  --hdl-ink:      #2c2420;
+  --hdl-inkLt:    #5c4e44;
+  --hdl-green:    #27ae60;
+  --hdl-danger:   #c0392b;
+  --hdl-amber:    #c47820;
+
+  /* Neumorphic shadows — exact Dashboard set */
+  --bs-raised:    10px 10px 28px rgba(0,0,0,.42), -6px -6px 20px rgba(255,255,255,.9);
+  --bs-raisedMd:  7px 7px 20px rgba(0,0,0,.4),   -4px -4px 14px rgba(255,255,255,.85);
+  --bs-raisedSm:  5px 5px 14px rgba(0,0,0,.38),  -3px -3px 10px rgba(255,255,255,.82);
+  --bs-pressed:   inset 4px 4px 12px rgba(0,0,0,.42), inset -3px -3px 8px rgba(255,255,255,.55);
+  --bs-insetDeep: inset 6px 6px 18px rgba(0,0,0,.38), inset -4px -4px 14px rgba(255,255,255,.55);
+  --bs-insetSm:   inset 3px 3px 8px rgba(0,0,0,.3),   inset -2px -2px 6px rgba(255,255,255,.55);
+  --bs-copper:    5px 5px 14px rgba(0,0,0,.5), -2px -2px 8px rgba(255,255,255,.4), 0 0 18px rgba(184,115,51,.32);
+
+  /* Surface tones — pulled directly from Dashboard */
+  --surf-base:    linear-gradient(160deg, #ede8dc 0%, #d8d0c0 100%);   /* page bg / section card */
+  --surf-raised:  linear-gradient(145deg, #ede8dc, #d8d0c0);           /* stat / action cards */
+  --surf-header:  linear-gradient(160deg, #d0c8b8, #c0b8a8);           /* card headers / modal headers */
+  --surf-inset:   linear-gradient(160deg, #d8d0c0, #cac0b0);           /* inset panels, status strip */
+  --surf-deep:    linear-gradient(145deg, #d0c8b8, #c4bcac);           /* deepest inset (chips, select) */
+  --surf-tile:    linear-gradient(145deg, #e0d8c8, #d0c8b8);           /* row alt / action tile */
+  --surf-input:   linear-gradient(145deg, #e2dace, #d4ccbc);           /* text inputs */
+}
+
+/* ─────────────────────────────────────────
+   ANIMATIONS
+───────────────────────────────────────── */
+@keyframes hdl-spin    { to { transform: rotate(360deg); } }
+@keyframes hdl-toast-in {
+  from { opacity: 0; transform: translateY(12px) scale(.96); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);   }
+}
+@keyframes hdl-count {
+  from { opacity: 0; transform: translateY(8px) scale(.9); }
+  to   { opacity: 1; transform: translateY(0)   scale(1);  }
+}
+
+/* ─────────────────────────────────────────
+   LAYOUT
+───────────────────────────────────────── */
+.hdl-root {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surf-base);
+  font-family: 'Instrument Sans', sans-serif;
+}
+
+.hdl-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 28px;
+  gap: 16px;
+}
+
+/* Scrollbar — matches Dashboard .dash-scroll */
+.hdl-body::-webkit-scrollbar,
+.hdl-table-wrap::-webkit-scrollbar,
+.hdl-sk-chips-wrap::-webkit-scrollbar,
+.hdl-modal::-webkit-scrollbar          { width: 6px; height: 6px; }
+.hdl-body::-webkit-scrollbar-track,
+.hdl-table-wrap::-webkit-scrollbar-track,
+.hdl-sk-chips-wrap::-webkit-scrollbar-track,
+.hdl-modal::-webkit-scrollbar-track    { background: transparent; }
+.hdl-body::-webkit-scrollbar-thumb,
+.hdl-table-wrap::-webkit-scrollbar-thumb,
+.hdl-sk-chips-wrap::-webkit-scrollbar-thumb,
+.hdl-modal::-webkit-scrollbar-thumb    { background: rgba(184,115,51,.3); border-radius: 3px; }
+.hdl-body::-webkit-scrollbar-thumb:hover,
+.hdl-table-wrap::-webkit-scrollbar-thumb:hover,
+.hdl-sk-chips-wrap::-webkit-scrollbar-thumb:hover,
+.hdl-modal::-webkit-scrollbar-thumb:hover { background: rgba(184,115,51,.55); }
+
+/* ─────────────────────────────────────────
+   TABLE
+───────────────────────────────────────── */
+.hdl-table-wrap {
+  overflow-x: auto;
+  overflow-y: auto;
+  position: relative;
+  background: #f8f6f1;
+}
+
+/* Row hover — subtle copper wash, same as Dashboard action-card hover */
+.hdl-row:hover { background: rgba(184,115,51,.06) !important; }
+
+/* ─────────────────────────────────────────
+   TOGGLE — unchanged from original, kept coherent
+───────────────────────────────────────── */
+.hdl-toggle {
+  position: relative;
+  width: 38px; height: 20px;
+  border-radius: 12px;
+  cursor: pointer;
+  background: linear-gradient(145deg, #b8b0a0, #a89f90);
+  box-shadow: inset 3px 3px 6px rgba(0,0,0,.35), inset -2px -2px 5px rgba(255,255,255,.45);
+  transition: background .25s ease, box-shadow .25s ease;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.hdl-toggle.on {
+  background: linear-gradient(135deg, var(--hdl-copper), #7a4e28);
+  box-shadow: var(--bs-copper);
+}
+.hdl-toggle-knob {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #ede6d6, #d8d0c0);
+  box-shadow: 2px 2px 5px rgba(0,0,0,.35), -1px -1px 3px rgba(255,255,255,.6);
+  transition: transform .25s cubic-bezier(.4,.2,.2,1.1), background .25s ease, box-shadow .25s ease;
+}
+.hdl-toggle.on .hdl-toggle-knob {
+  transform: translateX(18px);
+  background: linear-gradient(145deg, #fff8ee, #f0e8d8);
+  box-shadow: 2px 2px 6px rgba(0,0,0,.3);
+}
+.hdl-toggle-knob::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, rgba(160,146,131,.6), rgba(160,146,131,.2));
+  transition: background .25s ease;
+}
+.hdl-toggle.on .hdl-toggle-knob::after {
+  background: radial-gradient(circle, rgba(184,115,51,.7), rgba(184,115,51,.2));
+}
+
+/* ─────────────────────────────────────────
+   BUTTON
+───────────────────────────────────────── */
+.hdl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  user-select: none;
+  font-family: 'Instrument Sans', sans-serif;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  transition: opacity .15s ease;
+  white-space: nowrap;
+}
+.hdl-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ─────────────────────────────────────────
+   STEPPER CONNECTOR
+───────────────────────────────────────── */
+.hdl-step-connector {
+  flex: 1;
+  height: 2px;
+  background: linear-gradient(to right, rgba(184,115,51,.25), rgba(184,115,51,.08));
+  margin: 0 4px;
+  align-self: center;
+  margin-bottom: 20px;
+  transition: background .3s ease;
+}
+.hdl-step-connector.done {
+  background: linear-gradient(to right, var(--hdl-copper), rgba(184,115,51,.45));
+}
+
+/* ─────────────────────────────────────────
+   LOOKUP PILL — accent tag in table cell
+───────────────────────────────────────── */
+.hdl-lookup-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .06em;
+  color: var(--hdl-copper);
+  background: rgba(184,115,51,.1);
+  border: 1px solid rgba(184,115,51,.22);
+}
+
+/* ─────────────────────────────────────────
+   MODAL OVERLAY & SHELL
+   Uses Dashboard surface tokens throughout
+───────────────────────────────────────── */
+.hdl-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(44,36,32,.52);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.hdl-modal {
+  width: 100%;
+  max-width: 900px;
+  border-radius: 16px;
+  /* Same gradient as Dashboard section cards */
+  background: var(--surf-base);
+  box-shadow: var(--bs-raised);
+  border: 1px solid rgba(255,255,255,.42);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
+}
+
+/* ── Modal header strip (matches Dashboard card headers) ──
+   Uses var(--surf-header) = linear-gradient(160deg, #d0c8b8, #c0b8a8)
+   Same as .hdl-table-wrap thead / section card inner header.
+   NO copper override — stays warm beige to match the Dashboard. */
+.hdl-modal-header {
+  padding: 16px 24px;
+  background: var(--surf-header);
+  box-shadow: var(--bs-insetSm);
+  border-bottom: 1px solid rgba(0,0,0,.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+/* ── Modal footer strip ── */
+.hdl-modal-footer {
+  padding: 14px 22px;
+  background: var(--surf-header);
+  box-shadow: var(--bs-insetSm), 0 -2px 8px rgba(0,0,0,.1);
+  border-top: 1px solid rgba(0,0,0,.08);
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ── Modal body scroll area ── */
+.hdl-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 22px;
+}
+
+/* ─────────────────────────────────────────
+   FILE PILL — displayed in header card
+───────────────────────────────────────── */
+.hdl-file-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: var(--surf-deep);
+  box-shadow: var(--bs-insetSm);
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  letter-spacing: .04em;
+  color: var(--hdl-inkLt);
+}
+
+/* ─────────────────────────────────────────
+   PAGINATION BUTTONS
+───────────────────────────────────────── */
+.hdl-pg-btn {
+  width: 28px; height: 28px;
+  border-radius: 7px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  transition: all .15s ease;
+}
+.hdl-pg-btn:disabled { opacity: .35; cursor: default; }
+
+/* ─────────────────────────────────────────
+   TOAST NOTIFICATION
+───────────────────────────────────────── */
+.hdl-toast {
+  position: fixed;
+  bottom: 24px; right: 24px;
+  z-index: 99999;
+  padding: 14px 22px;
+  border-radius: 10px;
+  max-width: 420px;
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  letter-spacing: .03em;
+  /* Raised card — matches Dashboard stat cards */
+  background: var(--surf-base);
+  box-shadow: var(--bs-raisedMd);
+  border: 1px solid rgba(255,255,255,.4);
+  animation: hdl-toast-in .3s ease;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ─────────────────────────────────────────
+   ATTRIBUTE CHIPS (legacy)
+───────────────────────────────────────── */
+.hdl-attr-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .04em;
+  color: var(--hdl-inkLt);
+  cursor: pointer;
+  user-select: none;
+  /* Matches Dashboard action-card surface */
+  background: linear-gradient(145deg, #e2dace, #d0c8b8);
+  box-shadow: var(--bs-raisedSm);
+  transition: all .15s ease;
+  white-space: nowrap;
+}
+.hdl-attr-chip:hover {
+  background: linear-gradient(135deg, var(--hdl-copper), #7a4e28);
+  color: #f8f0e0;
+  box-shadow: var(--bs-copper);
+  transform: translateY(-1px);
+}
+.hdl-attr-chip:active {
+  transform: translateY(0);
+  box-shadow: var(--bs-pressed);
+}
+
+/* ─────────────────────────────────────────
+   SOURCE KEYS — SELECT
+───────────────────────────────────────── */
+.hdl-sk-select {
+  padding: 8px 28px 8px 12px;
+  border-radius: 7px;
+  border: none;
+  outline: none;
+  background: var(--surf-deep);
+  box-shadow: var(--bs-insetSm);
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  color: var(--hdl-ink);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235c4e44'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  transition: box-shadow .2s ease;
+}
+.hdl-sk-select:focus {
+  box-shadow: var(--bs-insetSm), 0 0 0 2px rgba(184,115,51,.35);
+}
+
+/* ─────────────────────────────────────────
+   SOURCE KEYS — CHIPS WRAP
+   Matches Dashboard status-strip / at-a-glance inset surface
+───────────────────────────────────────── */
+.hdl-sk-chips-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--surf-inset);
+  box-shadow: var(--bs-insetDeep);
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+/* ─────────────────────────────────────────
+   SOURCE KEYS — VALUE TAG
+───────────────────────────────────────── */
+.hdl-sk-value-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--hdl-copper);
+  background: rgba(184,115,51,.1);
+  border: 1px solid rgba(184,115,51,.22);
+}
+.hdl-sk-value-tag button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--hdl-danger);
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+}
+
+/* ─────────────────────────────────────────
+   NEU CHIP — quick-insert chips
+   Raised surface matching Dashboard ActionCard
+───────────────────────────────────────── */
+.hdl-neu-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: .03em;
+  cursor: pointer;
+  user-select: none;
+  /* Default — same palette as Dashboard action cards */
+  color: var(--hdl-inkLt);
+  background: linear-gradient(145deg, #e0d8c8, #d0c8b8);
+  box-shadow: var(--bs-raisedSm);
+  border: 1px solid rgba(255,255,255,.38);
+  transition: transform .15s ease, background .15s ease, color .15s ease, box-shadow .15s ease;
+  white-space: nowrap;
+  position: relative;
+  overflow: hidden;
+}
+.hdl-neu-chip:hover {
+  transform: translateY(-2px);
+  background: linear-gradient(145deg, #ebe3d3, #dbd3c3);
+  box-shadow: var(--bs-raisedMd);
+}
+.hdl-neu-chip:active {
+  transform: translateY(0);
+  box-shadow: var(--bs-pressed);
+}
+
+/* ─────────────────────────────────────────
+   TOKEN TAG
+───────────────────────────────────────── */
+.hdl-token-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--hdl-copper);
+  background: rgba(184,115,51,.1);
+  border: 1px solid rgba(184,115,51,.2);
+  letter-spacing: .03em;
+}
+
+/* ─────────────────────────────────────────
+   FILTER INPUT — inside source keys dialog
+───────────────────────────────────────── */
+.hdl-filter-input {
+  width: 100%;
+  padding: 9px 30px 9px 30px;
+  border-radius: 7px;
+  border: none;
+  outline: none;
+  background: var(--surf-input);
+  box-shadow: var(--bs-insetSm);
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  color: var(--hdl-ink);
+  transition: box-shadow .2s ease;
+}
+.hdl-filter-input:focus {
+  box-shadow: var(--bs-insetSm), 0 0 0 2px rgba(184,115,51,.3);
+}
+.hdl-filter-input::placeholder { color: var(--hdl-warmDrk); }
+
+/* ─────────────────────────────────────────
+   SECTION DIVIDER
+───────────────────────────────────────── */
+.hdl-section-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+}
+.hdl-section-divider-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(to right, transparent, rgba(184,115,51,.22), transparent);
+}
+.hdl-section-divider-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--hdl-inkLt);
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+/* ─────────────────────────────────────────
+   REMOVE the old forced copper-header override.
+   Modal headers now use var(--surf-header)
+   (warm beige) to match the Dashboard exactly.
+   The copper accent is expressed only through
+   the left accent-bar on cards (matching Dashboard
+   StatCard accent bar) and copper-coloured text.
+───────────────────────────────────────── */
+
+/* ─────────────────────────────────────────
+   SECTION CARD accent bar helper
+   (Can be applied as a child div inside SectionCard)
+───────────────────────────────────────── */
+.hdl-accent-bar {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: linear-gradient(to bottom, var(--hdl-copper), rgba(184,115,51,.5));
+  border-radius: 14px 0 0 14px;
+}
+
+/* ─────────────────────────────────────────
+   BREADCRUMB STRIP — inset surface
+───────────────────────────────────────── */
+.hdl-breadcrumb {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 10px 14px;
+  border-radius: 9px;
+  background: var(--surf-inset);
+  box-shadow: var(--bs-insetSm);
+}
+
+/* ─────────────────────────────────────────
+   EXCEL FILES BAND — matches Dashboard "At a
+   Glance" inset tile colour
+───────────────────────────────────────── */
+.hdl-excel-band {
+  background: var(--surf-inset) !important;
+  box-shadow: var(--bs-insetSm) !important;
+}
+
+/* ─────────────────────────────────────────
+   STEP CIRCLE — active state uses the blue
+   tint shown in Dashboard step circles;
+   done state uses copper (matches statCard
+   accent + copper btn)
+───────────────────────────────────────── */
+.hdl-step-circle {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all .22s ease;
+}
+.hdl-step-circle.idle {
+  background: linear-gradient(145deg, #ccc4b4, #bdb4a4);
+  box-shadow: var(--bs-insetSm);
+  color: var(--hdl-warmDrk);
+}
+.hdl-step-circle.active {
+  background: linear-gradient(135deg, #7a9cc8, #3a5c8a);
+  box-shadow: var(--bs-raisedSm);
+  color: #f0f4ff;
+}
+.hdl-step-circle.done {
+  background: linear-gradient(135deg, var(--hdl-copper), #7a4e28);
+  box-shadow: var(--bs-copper);
+  color: #f8f0e0;
+}
+
+/* ─────────────────────────────────────────
+   UTILITY: raised card surface
+   Use on any SectionCard-like container for
+   consistent look across the page
+───────────────────────────────────────── */
+.hdl-card {
+  border-radius: 14px;
+  background: var(--surf-base);
+  box-shadow: var(--bs-raised);
+  border: 1px solid rgba(255,255,255,.42);
+  position: relative;
+  overflow: hidden;
+}
+
+/* ─────────────────────────────────────────
+   TABLE HEADER STRIP
+   linear-gradient(180deg, #cfc8b8, #c4bcab)
+   mirrors Dashboard section title bar exactly
+───────────────────────────────────────── */
+.hdl-table-thead th {
+  background: linear-gradient(180deg, #cfc8b8 0%, #c4bcab 100%);
+  padding: 12px 16px;
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #4a4032;
+  border-bottom: 1px solid rgba(0,0,0,.12);
+  white-space: nowrap;
+}
+
+/* ─────────────────────────────────────────
+   ICON DISC — matches Dashboard StatCard icon
+───────────────────────────────────────── */
+.hdl-icon-disc {
+  width: 48px; height: 48px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #ddd6c6, #c0b8a8);
+  box-shadow: var(--bs-raisedSm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+/* ─────────────────────────────────────────
+   LOADING SPINNER
+───────────────────────────────────────── */
+.hdl-spinner {
+  border-radius: 50%;
+  border-style: solid;
+  border-color: rgba(0,0,0,.1);
+  border-top-color: var(--hdl-copper);
+  animation: hdl-spin .7s linear infinite;
+}
