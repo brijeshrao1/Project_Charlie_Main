@@ -17,6 +17,29 @@ function AppContent() {
   const location = useLocation();
   const showTopbar = location.pathname !== "/hdl";
 
+  useEffect(() => {
+    const path = location.pathname;
+    const routeToName = {
+      "/": "Dashboard",
+      "/dashboard": "Dashboard",
+      "/hierarchy": "Hierarchy",
+      "/hdl": "HDL",
+      "/config": "Configuration",
+      "/post-validation": "Post Validation",
+      "/onboarding": "Onboarding",
+    };
+    let name = routeToName[path];
+    if (!name) {
+      const parts = path.replace(/^\//, "").split("/");
+      if (parts.length && parts[0]) {
+        name = parts[0].replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+      } else {
+        name = "Dashboard";
+      }
+    }
+    document.title = `Charlie Tool - Mythics - ${name}`;
+  }, [location]);
+
   return (
     <div className="layout fade-in">
       <Sidebar />
