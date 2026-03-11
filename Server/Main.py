@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 import tempfile
 from typing import Dict, List, Optional, Tuple, Set, Any
 from pathlib import Path
-from pydantic import BaseModel, Json, Field, HttpUrl
+from pydantic import BaseModel, Json, Field, HttpUrl, ConfigDict
 import json
 import logging
 import shutil
@@ -44,23 +44,18 @@ except Exception:
         import google.genai as genai
     except Exception as e:
         genai = None
-        logging.warning(
-            "GenAI client import failed (%s). To enable Gemini features install: pip install google-genai",
-            e,
-        )
+        # Only warn if the user has configured a GEMINI_API_KEY — otherwise
+        # silently disable Gemini features to avoid noisy startup logs.
+        if os.environ.get("GEMINI_API_KEY"):
+            logging.warning(
+                "GenAI client import failed (%s). To enable Gemini features install: pip install google-genai",
+                e,
+            )
+        else:
+            logging.debug("GenAI client not installed; Gemini features disabled.")
 from openpyxl.styles import PatternFill, Border, Side, Font, Alignment
 from openpyxl.utils import get_column_letter
-import xml.etree.ElementTree as ET
-from openpyxl.worksheet.table import Table, TableStyleInfo 
-try:
-    import jwt
-    from jwt import PyJWKClient, InvalidTokenError, ExpiredSignatureError
-except Exception as e:
-    raise ImportError(
-        "PyJWT is required but not installed or failed to import.\n"
-        "Please run `pip install -r Requirements.txt` in the Server/ directory.\n"
-        f"Original error: {e}"
-    )
+from openpyxl.worksheet.table import Table, TableStyleInfo
 
 
 # Load environment variables
@@ -95,21 +90,6 @@ app.add_middleware(
     expose_headers=["X-Bundle-Filename", "Content-Disposition"]
 )
 
-CLERK_JWT_REQUIRED = os.getenv("CLERK_JWT_REQUIRED", "true").strip().lower() == "true"
-CLERK_ISSUER = os.getenv("CLERK_ISSUER", "").strip().rstrip("/")
-CLERK_AUDIENCE = os.getenv("CLERK_AUDIENCE", "").strip() or None
-CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "").strip() or (
-    f"{CLERK_ISSUER}/.well-known/jwks.json" if CLERK_ISSUER else ""
-)
-_clerk_jwks_client = PyJWKClient(CLERK_JWKS_URL) if CLERK_JWKS_URL else None
-CLERK_API_KEY = os.getenv("CLERK_API_KEY", "").strip() or None
-CLERK_API_BASE = os.getenv("CLERK_API_BASE", "https://api.clerk.com/v1").strip()
-
-# Simple in-memory token cache: token -> (claims, exp_timestamp)
-_token_cache: Dict[str, Tuple[Dict[str, Any], float]] = {}
-_token_cache_lock = threading.Lock()
-
-
 def _startup_env_check():
     """Fail-fast checks for required environment variables in production.
 
@@ -117,11 +97,6 @@ def _startup_env_check():
     """
     app_env = os.getenv("APP_ENV", "development").strip().lower()
     missing = []
-    if app_env == "production":
-        if CLERK_JWT_REQUIRED and not CLERK_ISSUER:
-            missing.append("CLERK_ISSUER")
-        if not CLERK_API_KEY:
-            missing.append("CLERK_API_KEY")
     if missing:
         logging.critical("Missing required environment variables for production: %s", ",".join(missing))
         raise SystemExit(1)
@@ -135,13 +110,6 @@ except SystemExit:
 except Exception as e:
     logging.warning("Startup env check failed unexpectedly: %s", e)
 
-if CLERK_JWT_REQUIRED and not CLERK_ISSUER:
-    logging.warning(
-        "CLERK_JWT_REQUIRED is true but CLERK_ISSUER is not configured. "
-        "All protected API requests will fail authentication."
-    )
-
-
 def _is_public_path(path: str) -> bool:
     if path in {"/", "/docs", "/redoc", "/openapi.json", "/api/health"}:
         return True
@@ -150,119 +118,7 @@ def _is_public_path(path: str) -> bool:
     return False
 
 
-def _validate_clerk_token(token: str) -> Dict[str, Any]:
-    """
-    Validate a Clerk JWT using the configured JWKS URL. Implements simple retry
-    and improved error logging for production safety.
-    """
-    if not CLERK_ISSUER or not CLERK_JWKS_URL:
-        logger.error("Clerk verification missing configuration: ISSUER=%r, JWKS_URL=%r", CLERK_ISSUER, CLERK_JWKS_URL)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Clerk JWT verification is not configured on the server.",
-        )
-
-    # Check cache first
-    try:
-        with _token_cache_lock:
-            cached = _token_cache.get(token)
-            if cached:
-                claims_cached, exp_ts = cached
-                if not exp_ts or exp_ts > time.time():
-                    return claims_cached
-                else:
-                    del _token_cache[token]
-    except Exception:
-        # non-fatal cache error
-        pass
-
-    # Make a few attempts to fetch/resolve the signing key (network could be flaky)
-    last_exc = None
-    for attempt in range(1, 4):
-        try:
-            signing_key = _clerk_jwks_client.get_signing_key_from_jwt(token).key
-            decode_args: Dict[str, Any] = {
-                "algorithms": ["RS256"],
-                "issuer": CLERK_ISSUER,
-                "options": {"verify_aud": bool(CLERK_AUDIENCE)},
-            }
-            if CLERK_AUDIENCE:
-                decode_args["audience"] = CLERK_AUDIENCE
-
-            claims = jwt.decode(token, signing_key, **decode_args)
-            # cache token until its expiry (if present)
-            try:
-                exp = claims.get("exp")
-                exp_ts = float(exp) if exp else 0.0
-                with _token_cache_lock:
-                    _token_cache[token] = (claims, exp_ts)
-            except Exception:
-                pass
-            return claims
-        except ExpiredSignatureError:
-            logger.info("Received expired token on attempt %d", attempt)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication token expired.",
-            )
-        except InvalidTokenError as exc:
-            # These are client errors — do not retry indefinite
-            logger.warning("Invalid token while validating: %s", exc)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Invalid authentication token: {exc}",
-            )
-        except Exception as exc:
-            last_exc = exc
-            logger.warning("JWKS fetch/validation attempt %d failed: %s", attempt, exc)
-            # small backoff before retrying
-            time.sleep(0.5 * attempt)
-
-    logger.exception("Failed to validate Clerk JWT after retries: %s", last_exc)
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Unable to validate authentication token.",
-    )
-
-
-@app.middleware("http")
-async def enforce_clerk_authentication(request: Request, call_next):
-    if request.method == "OPTIONS":
-        return await call_next(request)
-
-    path = request.url.path
-    if _is_public_path(path):
-        return await call_next(request)
-
-    if CLERK_JWT_REQUIRED and path.startswith("/api"):
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.lower().startswith("bearer "):
-            return JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "Missing Bearer token."},
-            )
-
-        token = auth_header.split(" ", 1)[1].strip()
-        if not token:
-            return JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "Missing Bearer token."},
-            )
-
-        try:
-            claims = _validate_clerk_token(token)
-        except HTTPException as exc:
-            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-
-        # attach claims to request.state for downstream handlers
-        request.state.clerk_claims = claims
-
-        # Optional: reject tokens missing expected producer/issuer pattern
-        if not claims.get("iss") or CLERK_ISSUER and not claims.get("iss", "").startswith(CLERK_ISSUER):
-            logger.warning("Token issuer mismatch: got=%r expected_prefix=%r", claims.get("iss"), CLERK_ISSUER)
-            return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": "Invalid token issuer."})
-
-    return await call_next(request)
+# Authentication middleware removed; no token interception in this deployment.
 
 
 UPLOAD_DIR = Path("uploads")
@@ -302,165 +158,8 @@ def health():
     )
 
 
-@app.get("/api/auth/me")
-def auth_me(request: Request):
-    claims = getattr(request.state, "clerk_claims", None)
-    if not claims:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication context not found.",
-        )
-
-    return {
-        "user_id": claims.get("sub"),
-        "issuer": claims.get("iss"),
-        "session_id": claims.get("sid"),
-        "claims": claims,
-    }
-
-
 # Admin-only endpoint will be registered after the `require_roles` helper to
 # ensure dependency factories are defined before being used.
-
-
-def get_current_user(request: Request) -> Dict[str, Any]:
-    """Dependency helper to fetch validated Clerk claims from the request."""
-    claims = getattr(request.state, "clerk_claims", None)
-    if not claims:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-    return claims
-
-
-def require_roles(*roles: str):
-    """Return a dependency function that ensures the user has at least one of the provided roles.
-
-    This checks common claim names like `roles`, `role`, or `user_role` (list or single value).
-    """
-    def _dep(request: Request):
-        claims = getattr(request.state, "clerk_claims", None)
-        if not claims:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-
-        user_roles = claims.get("roles") or claims.get("role") or claims.get("user_role") or []
-        if isinstance(user_roles, str):
-            user_roles = [user_roles]
-
-        if not any(r in user_roles for r in roles):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient role membership")
-
-        return claims
-
-    return _dep
-
-
-# Example protected endpoint that requires `admin` role. Registered after
-# `require_roles` so the dependency factory is available at definition time.
-@app.get("/api/admin-only")
-def admin_only(user=Depends(require_roles("admin"))):
-    return {"ok": True, "user": user.get("sub"), "roles": user.get("roles")}
-
-
-def clerk_api_request(method: str, path: str, **kwargs):
-    """Call Clerk Admin API using `CLERK_API_KEY`.
-
-    `path` may be a full URL or a path appended to `CLERK_API_BASE`.
-    Returns parsed JSON or raises HTTPException on failures.
-    """
-    if not CLERK_API_KEY:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="CLERK_API_KEY not configured on server")
-
-    # Basic sanity-check for the server API key format to provide a clearer error
-    try:
-        if isinstance(CLERK_API_KEY, str):
-            # Clerk server API keys typically start with 'sk_'
-            if not CLERK_API_KEY.strip() or not CLERK_API_KEY.startswith("sk_"):
-                logging.warning("CLERK_API_KEY appears malformed or not a server key; value startswith sk_ check failed.")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=(
-                        "CLERK_API_KEY appears malformed or is not a Clerk server API key. "
-                        "Ensure you set the Clerk server API key (starts with 'sk_') in the environment."
-                    ),
-                )
-    except HTTPException:
-        raise
-    except Exception:
-        # Non-fatal: fall back to attempting the request and let Clerk return a detailed error
-        logging.debug("Unexpected error while validating CLERK_API_KEY format; proceeding to request.")
-
-    if path.startswith("http://") or path.startswith("https://"):
-        url = path
-    else:
-        url = CLERK_API_BASE.rstrip("/") + "/" + path.lstrip("/")
-
-    headers = kwargs.pop("headers", {}) or {}
-    headers.setdefault("Authorization", f"Bearer {CLERK_API_KEY}")
-    # allow callers to override content-type
-    headers.setdefault("Content-Type", "application/json")
-
-    try:
-        resp = requests.request(method, url, headers=headers, timeout=15, **kwargs)
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Clerk API request failed: {e}")
-
-    if not resp.ok:
-        try:
-            detail = resp.json()
-        except Exception:
-            detail = resp.text
-
-        # Friendly handling for common Clerk API error: missing JWT template
-        try:
-            if isinstance(detail, dict) and detail.get("errors"):
-                first_err = detail["errors"][0]
-                code = first_err.get("code")
-                long_msg = first_err.get("long_message", "") or ""
-                msg = first_err.get("message", "") or ""
-                if code == "resource_not_found" and (
-                    "JWT template" in long_msg or "JWT template" in msg or "No JWT template" in long_msg
-                ):
-                    logging.error("Clerk JWT template missing: %s", first_err)
-                    raise HTTPException(
-                        status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail=(
-                            "Clerk JWT template 'backend' not found. "
-                            "Create the template in the Clerk Dashboard or update the server configuration to use an existing template name."
-                        ),
-                    )
-        except Exception:
-            # fall through to generic handler
-            pass
-
-        raise HTTPException(status_code=resp.status_code, detail={"clerk_error": detail})
-
-    try:
-        return resp.json()
-    except Exception:
-        return resp.text
-
-
-# ---------------------- Clerk Admin endpoints (server-side) ----------------------
-@app.get("/api/admin/clerk/users")
-def clerk_list_users(limit: int = 100, cursor: Optional[str] = None, _=Depends(require_roles("admin"))):
-    params = {"limit": limit}
-    if cursor:
-        params["cursor"] = cursor
-    return clerk_api_request("GET", "users", params=params)
-
-
-@app.get("/api/admin/clerk/users/{user_id}")
-def clerk_get_user(user_id: str, _=Depends(require_roles("admin"))):
-    return clerk_api_request("GET", f"users/{user_id}")
-
-
-@app.patch("/api/admin/clerk/users/{user_id}")
-def clerk_update_user(user_id: str, payload: Dict[str, Any], _=Depends(require_roles("admin"))):
-    # Only forward known-updatable fields; allow public_metadata/private_metadata updates
-    allowed = {"public_metadata", "private_metadata", "first_name", "last_name", "email_addresses"}
-    body = {k: v for k, v in payload.items() if k in allowed}
-    if not body:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No updatable fields provided")
-    return clerk_api_request("PATCH", f"users/{user_id}", json=body)
 
 
 pass_df = pd.DataFrame()
@@ -5554,8 +5253,7 @@ class HDLTriggerRequest(BaseModel):
     fileAction: Optional[str] = None
     importConcurrentThreads: Optional[int] = None
 
-    class Config:
-        extra = "ignore" 
+    model_config = ConfigDict(extra="ignore")
 
 
 def load_oracle_credentials(customer_name: str, instance_name: str):
