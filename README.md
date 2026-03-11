@@ -155,6 +155,56 @@ NLP_SERVICE_URL=http://127.0.0.1:5000
 
 ---
 
+## 🔐 Clerk Authentication (Frontend + Backend)
+
+This project uses Clerk for user authentication. The frontend requests a Clerk-issued JWT and sends it in the `Authorization: Bearer <token>` header to the backend. The backend validates the JWT using Clerk's JWKS endpoint.
+
+Frontend (React) configuration (`frontend/charlie_client/.env` or `.env.local`):
+
+```
+REACT_APP_CLERK_PUBLISHABLE_KEY=pk_test_your_publishable_key
+# JWT template configured in Clerk dashboard (defaults used by this project)
+REACT_APP_CLERK_JWT_TEMPLATE=backend
+```
+
+Backend (Server) configuration (`Server/.env`):
+
+```
+CLERK_JWT_REQUIRED=true
+CLERK_ISSUER=https://your-instance-name.clerk.accounts.dev
+# Optional, set if your JWT template sets an `aud` claim
+CLERK_AUDIENCE=backend
+# Optional override for JWKS URL
+# CLERK_JWKS_URL=
+```
+
+**Server-side Clerk management (production grade)**
+
+- Set `CLERK_API_KEY` in `Server/.env` (server secret) to enable administrative user management endpoints.
+- Set `APP_ENV=production` in production to enable fail-fast env validation checks.
+- The backend exposes admin endpoints (require `admin` role):
+  - `GET /api/admin/clerk/users` — list users
+  - `GET /api/admin/clerk/users/{user_id}` — get user
+  - `PATCH /api/admin/clerk/users/{user_id}` — update allowed fields (`public_metadata`, `private_metadata`, `first_name`, `last_name`, `email_addresses`)
+
+Usage notes:
+- The backend validates Clerk JWTs using the configured `CLERK_ISSUER` and caches validated tokens for performance.
+- Ensure your Clerk JWT template provides role information (e.g., `roles` claim) or map roles into `public_metadata` so the backend's `require_roles()` dependency can enforce access.
+- For production, restrict `ALLOWED_ORIGINS`, enable HTTPS, and store `CLERK_API_KEY` in a secrets manager rather than in plain `.env` files.
+
+How it works:
+- Frontend uses the Clerk React SDK to sign in users and obtain a JWT (`getToken()`).
+- The frontend API client (`frontend/charlie_client/src/services/api.js`) attaches the JWT to outgoing `/api` requests.
+- The backend validates incoming tokens using `PyJWT` and `PyJWKClient` (see `Server/Main.py`).
+
+Notes & recommendations:
+- In development, the project ships with permissive CORS (allow all origins). Lock this down for production.
+- Never commit secret keys or `.env` files to source control.
+- Use HTTPS in production and configure allowed origins in Clerk app settings.
+
+
+---
+
 ## 🛠️ Troubleshooting
 
 | Issue | Cause | Solution |
