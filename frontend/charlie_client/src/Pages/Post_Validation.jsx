@@ -100,347 +100,31 @@ if (!document.getElementById("pvs-css")) {
 }
 
 /* ─────────────────────────────────────────
-   NEUMORPHIC VALIDATION LOADER — digital instrument panel
+   UNIFIED INSTRUMENT PANEL LOADER
+   Replaces ValidationLoader + GeminiLoader
 ───────────────────────────────────────── */
-const ValidationLoader = ({ progress, show, stage = "", eta }) => {
-  const overlayRef  = useRef(null);
-  const numRef      = useRef(null);
-  const barFillRef  = useRef(null);
-  const segRefs     = useRef([]);
-  const dotRefs     = useRef([]);
-  const scanRef     = useRef(null);
-  const glowRef     = useRef(null);
+const InstrumentPanelLoader = ({
+  title         = "INSTRUMENT ENGINE",
+  statusLabel   = "SYS:ACTIVE",
+  statusRunning = "RUNNING",
+  stageDefault  = "Initializing...",
+  dotLabels     = ["Step 1", "Step 2", "Step 3", "Done"],
+  dotPadding    = "0 8px",
+  progress      = 0,
+  show          = false,
+  stage         = "",
+  eta           = null,
+}) => {
+  const overlayRef = useRef(null);
+  const numRef     = useRef(null);
+  const barFillRef = useRef(null);
+  const segRefs    = useRef([]);
+  const dotRefs    = useRef([]);
+  const scanRef    = useRef(null);
+  const glowRef    = useRef(null);
 
-  useEffect(() => {
-    if (!overlayRef.current) return;
-    if (show) {
-      gsap.fromTo(overlayRef.current,
-        { opacity: 0 },
-        { opacity: 1, duration: .4, ease: "power2.out" }
-      );
-      /* scanline animation */
-      if (scanRef.current) {
-        gsap.fromTo(scanRef.current,
-          { top: "-2%" },
-          { top: "100%", duration: 3, repeat: -1, ease: "none" }
-        );
-      }
-    } else {
-      gsap.to(overlayRef.current, { opacity: 0, duration: .35, ease: "power2.in" });
-      if (scanRef.current) gsap.killTweensOf(scanRef.current);
-    }
-  }, [show]);
-
-  useEffect(() => {
-    if (!show) return;
-
-    /* number counter */
-    if (numRef.current) {
-      gsap.to(numRef.current, {
-        innerText: progress,
-        duration: .5, snap: { innerText: 1 }, ease: "none",
-      });
-    }
-
-    /* segmented bar fill */
-    if (barFillRef.current) {
-      gsap.to(barFillRef.current, {
-        width: `${progress}%`,
-        duration: .55, ease: "power2.out",
-      });
-    }
-
-    /* screen glow intensifies */
-    if (glowRef.current) {
-      gsap.to(glowRef.current, {
-        opacity: .15 + (progress / 100) * .45,
-        duration: .6, ease: "power2.out",
-      });
-    }
-
-    /* LED segment bars */
-    const SEG_COUNT = 20;
-    segRefs.current.forEach((seg, i) => {
-      if (!seg) return;
-      const threshold = ((i + 1) / SEG_COUNT) * 100;
-      const active = progress >= threshold;
-      const color = i < 14 ? "#b87333" : i < 17 ? "#d4935f" : "#c0392b";
-      gsap.to(seg, {
-        background: active ? color : "rgba(44,36,32,.08)",
-        boxShadow: active ? `0 0 6px ${color}80` : "none",
-        opacity: active ? 1 : .35,
-        duration: .2, ease: "power1.out", delay: i * .015,
-      });
-    });
-
-    /* step dots */
-    const thresholds = [0, 20, 40, 60, 80, 100];
-    dotRefs.current.forEach((dot, i) => {
-      if (!dot) return;
-      const active = progress >= thresholds[i];
-      gsap.to(dot, {
-        background: active
-          ? "linear-gradient(135deg, #c8843a, #7a4e28)"
-          : "linear-gradient(145deg, #d0c8b8, #bfb7a7)",
-        boxShadow: active
-          ? "0 0 10px rgba(184,115,51,.6), 3px 3px 8px rgba(0,0,0,.4)"
-          : "inset 2px 2px 5px rgba(0,0,0,.25), inset -1px -1px 3px rgba(255,255,255,.6)",
-        scale: active ? 1.15 : 1,
-        duration: .3, ease: "back.out(2)", delay: i * .04,
-      });
-    });
-  }, [progress, show]);
-
-  const dotLabels = ["Upload", "Parse", "Compare", "Analyze", "Report", "Done"];
-  const SEG_COUNT = 20;
-
-  return (
-    <div ref={overlayRef} style={{
-      position: "fixed", inset: 0, zIndex: 9999,
-      background: "rgba(44,36,32,.55)",
-      backdropFilter: "blur(18px)",
-      WebkitBackdropFilter: "blur(18px)",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      pointerEvents: show ? "all" : "none",
-      opacity: 0,
-    }}>
-      {/* ── Instrument-panel card ── */}
-      <div style={{
-        width: 400, padding: "48px 40px 40px",
-        borderRadius: 30,
-        background: "linear-gradient(160deg, #e8e2d4 0%, #cec6b4 50%, #c4bba8 100%)",
-        boxShadow:
-          "30px 30px 80px rgba(0,0,0,.55), " +
-          "-16px -16px 45px rgba(255,255,255,.85), " +
-          "inset 0 2px 0 rgba(255,255,255,.5), " +
-          "inset 0 -1px 0 rgba(0,0,0,.12)",
-        border: "1px solid rgba(255,255,255,.3)",
-        display: "flex", flexDirection: "column", alignItems: "center",
-        position: "relative",
-      }}>
-
-        {/* brass corner rivets with cross-slot */}
-        {[{top:16,left:16},{top:16,right:16},{bottom:16,left:16},{bottom:16,right:16}].map((pos,i) => (
-          <div key={i} style={{
-            position: "absolute", ...pos,
-            width: 13, height: 13, borderRadius: "50%",
-            background: "linear-gradient(135deg, #d4a95f, #8b6f4e, #c89b50)",
-            boxShadow: "2px 2px 5px rgba(0,0,0,.45), -1px -1px 3px rgba(255,255,255,.4), inset 0 1px 1px rgba(255,255,255,.3)",
-          }}>
-            <div style={{ position: "absolute", top: "50%", left: "50%", width: "65%", height: 1.5,
-              background: "rgba(0,0,0,.35)", transform: "translate(-50%,-50%)" }} />
-            <div style={{ position: "absolute", top: "50%", left: "50%", width: "65%", height: 1.5,
-              background: "rgba(0,0,0,.35)", transform: "translate(-50%,-50%) rotate(90deg)" }} />
-          </div>
-        ))}
-
-        {/* etched label plate */}
-        <div style={{
-          fontFamily: "'DM Mono', monospace",
-          fontSize: 8, fontWeight: 500, letterSpacing: ".25em", textTransform: "uppercase",
-          color: "var(--ink-lt)",
-          padding: "4px 14px", borderRadius: 4, marginBottom: 18,
-          background: "linear-gradient(145deg, #d8d0c0, #e0d8c8)",
-          boxShadow: "inset 1px 1px 3px rgba(0,0,0,.2), inset -1px -1px 2px rgba(255,255,255,.5)",
-          border: "1px solid rgba(0,0,0,.06)",
-        }}>VALIDATION ENGINE</div>
-
-        {/* ── Digital LCD Screen ── */}
-        <div style={{
-          position: "relative", width: "100%",
-          borderRadius: 14,
-          background: "linear-gradient(165deg, #1a1812 0%, #252018 50%, #1e1a14 100%)",
-          boxShadow:
-            "inset 5px 5px 18px rgba(0,0,0,.7), " +
-            "inset -3px -3px 10px rgba(255,255,255,.04), " +
-            "3px 3px 10px rgba(0,0,0,.3), " +
-            "-2px -2px 6px rgba(255,255,255,.15)",
-          border: "2px solid rgba(0,0,0,.25)",
-          padding: "28px 24px 22px",
-          marginBottom: 20,
-          overflow: "hidden",
-        }}>
-          {/* screen glow */}
-          <div ref={glowRef} style={{
-            position: "absolute", inset: 0,
-            borderRadius: 12,
-            background: "radial-gradient(ellipse at 50% 40%, rgba(184,115,51,.15) 0%, transparent 70%)",
-            opacity: .15, pointerEvents: "none",
-          }} />
-
-          {/* subtle scanline */}
-          <div ref={scanRef} style={{
-            position: "absolute", left: 0, right: 0,
-            height: "8%", top: "-2%",
-            background: "linear-gradient(180deg, transparent, rgba(184,115,51,.06), transparent)",
-            pointerEvents: "none",
-          }} />
-
-          {/* subtle grid texture */}
-          <div style={{
-            position: "absolute", inset: 0, borderRadius: 12,
-            backgroundImage:
-              "linear-gradient(rgba(255,255,255,.015) 1px, transparent 1px), " +
-              "linear-gradient(90deg, rgba(255,255,255,.015) 1px, transparent 1px)",
-            backgroundSize: "8px 8px",
-            pointerEvents: "none",
-          }} />
-
-          {/* ── Top bar: sys label + status LED ── */}
-          <div style={{
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-            marginBottom: 16, position: "relative",
-          }}>
-            <div style={{
-              fontFamily: "'DM Mono', monospace",
-              fontSize: 7, letterSpacing: ".3em", textTransform: "uppercase",
-              color: "rgba(184,115,51,.4)",
-            }}>SYS:ACTIVE</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-              <div style={{
-                width: 5, height: 5, borderRadius: "50%",
-                background: progress > 0 ? "#27ae60" : "#b87333",
-                boxShadow: progress > 0
-                  ? "0 0 8px rgba(39,174,96,.7)"
-                  : "0 0 6px rgba(184,115,51,.5)",
-                animation: progress > 0 && progress < 100 ? "none" : "none",
-              }} />
-              <div style={{
-                fontFamily: "'DM Mono', monospace",
-                fontSize: 7, letterSpacing: ".2em", textTransform: "uppercase",
-                color: progress > 0 ? "rgba(39,174,96,.6)" : "rgba(184,115,51,.4)",
-              }}>{progress >= 100 ? "DONE" : progress > 0 ? "RUNNING" : "IDLE"}</div>
-            </div>
-          </div>
-
-          {/* ── Big digital percentage ── */}
-          <div style={{
-            display: "flex", alignItems: "baseline", justifyContent: "center",
-            gap: 4, marginBottom: 14, position: "relative",
-          }}>
-            <div ref={numRef} style={{
-              fontFamily: "'DM Mono', monospace",
-              fontSize: 56, fontWeight: 500, color: "#d4935f",
-              lineHeight: 1,
-              textShadow: "0 0 20px rgba(184,115,51,.5), 0 0 40px rgba(184,115,51,.2)",
-              letterSpacing: ".06em",
-            }}>0</div>
-            <span style={{
-              fontFamily: "'DM Mono', monospace",
-              fontSize: 18, color: "rgba(184,115,51,.5)", fontWeight: 400,
-            }}>%</span>
-          </div>
-
-          {/* ── Stage readout line ── */}
-          <div style={{
-            fontFamily: "'DM Mono', monospace",
-            fontSize: 10, letterSpacing: ".18em", textTransform: "uppercase",
-            color: "rgba(212,147,95,.55)",
-            textAlign: "center", marginBottom: 16,
-            textShadow: "0 0 8px rgba(184,115,51,.3)",
-          }}>
-            {">"} {stage || "Initializing..."}
-          </div>
-
-          {/* ── Segmented LED bar ── */}
-          <div style={{
-            display: "flex", gap: 3, width: "100%", height: 14,
-            padding: "3px 4px",
-            borderRadius: 5,
-            background: "rgba(0,0,0,.3)",
-            boxShadow: "inset 2px 2px 6px rgba(0,0,0,.5), inset -1px -1px 3px rgba(255,255,255,.02)",
-          }}>
-            {Array.from({ length: SEG_COUNT }).map((_, i) => (
-              <div key={i} ref={el => segRefs.current[i] = el} style={{
-                flex: 1, borderRadius: 2,
-                background: "rgba(44,36,32,.08)",
-                opacity: .35,
-                transition: "none",
-              }} />
-            ))}
-          </div>
-
-          {/* ── Bottom stats row ── */}
-          <div style={{
-            display: "flex", justifyContent: "space-between", marginTop: 14,
-            position: "relative",
-          }}>
-            {[
-              { label: "ETA", value: progress >= 100 ? "00:00" : (eta != null && eta > 0) ? `${Math.floor(eta / 60)}:${String(Math.floor(eta % 60)).padStart(2, '0')}` : progress > 0 ? "calc..." : "--:--" },
-              { label: "PROC", value: `${Math.min(progress, 100)}%` },
-              { label: "MEM", value: "OK" },
-            ].map((stat) => (
-              <div key={stat.label} style={{ textAlign: "center" }}>
-                <div style={{
-                  fontFamily: "'DM Mono', monospace",
-                  fontSize: 7, letterSpacing: ".2em",
-                  color: "rgba(184,115,51,.35)",
-                }}>{stat.label}</div>
-                <div style={{
-                  fontFamily: "'DM Mono', monospace",
-                  fontSize: 10, letterSpacing: ".08em",
-                  color: "rgba(212,147,95,.6)",
-                  textShadow: "0 0 6px rgba(184,115,51,.25)",
-                  marginTop: 2,
-                }}>{stat.value}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* ── Brass progress bar ── */}
-        <div style={{
-          width: "100%", height: 8, borderRadius: 4,
-          background: "linear-gradient(145deg, #c0b8a6, #d0c8b8)",
-          boxShadow: "inset 3px 3px 8px rgba(0,0,0,.35), inset -2px -2px 5px rgba(255,255,255,.55)",
-          overflow: "hidden", marginBottom: 24, position: "relative",
-        }}>
-          <div ref={barFillRef} style={{
-            height: "100%", width: "0%", borderRadius: 4,
-            background: "linear-gradient(90deg, #d4a95f, #b87333, #8b6f4e)",
-            boxShadow: "0 0 10px rgba(184,115,51,.5), inset 0 1px 1px rgba(255,255,255,.3)",
-            transition: "none",
-          }} />
-        </div>
-
-        {/* ── Step dots ── */}
-        <div style={{
-          display: "flex", justifyContent: "space-between",
-          width: "100%", padding: "0 8px",
-        }}>
-          {dotLabels.map((label, i) => (
-            <div key={label} style={{
-              display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
-            }}>
-              <div ref={el => dotRefs.current[i] = el} style={{
-                width: 14, height: 14, borderRadius: "50%",
-                background: "linear-gradient(145deg, #d0c8b8, #bfb7a7)",
-                boxShadow: "inset 2px 2px 5px rgba(0,0,0,.25), inset -1px -1px 3px rgba(255,255,255,.6)",
-              }} />
-              <span style={{
-                fontFamily: "'DM Mono', monospace",
-                fontSize: 7, letterSpacing: ".1em", textTransform: "uppercase",
-                color: "var(--ink-lt)",
-              }}>{label}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-/* ─────────────────────────────────────────
-   GEMINI AI MAPPING LOADER — neumorphic brass instrument panel
-───────────────────────────────────────── */
-const GeminiLoader = ({ progress, show, stage = "", eta }) => {
-  const overlayRef  = useRef(null);
-  const numRef      = useRef(null);
-  const barFillRef  = useRef(null);
-  const segRefs     = useRef([]);
-  const dotRefs     = useRef([]);
-  const scanRef     = useRef(null);
-  const glowRef     = useRef(null);
+  /* Reset dot refs array length when dotLabels change */
+  dotRefs.current = dotRefs.current.slice(0, dotLabels.length);
 
   useEffect(() => {
     if (!overlayRef.current) return;
@@ -470,14 +154,12 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
         duration: .5, snap: { innerText: 1 }, ease: "none",
       });
     }
-
     if (barFillRef.current) {
       gsap.to(barFillRef.current, {
         width: `${progress}%`,
         duration: .55, ease: "power2.out",
       });
     }
-
     if (glowRef.current) {
       gsap.to(glowRef.current, {
         opacity: .15 + (progress / 100) * .45,
@@ -489,17 +171,21 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
     segRefs.current.forEach((seg, i) => {
       if (!seg) return;
       const threshold = ((i + 1) / SEG_COUNT) * 100;
-      const active = progress >= threshold;
-      const color = i < 14 ? "#b87333" : i < 17 ? "#d4935f" : "#c0392b";
+      const active    = progress >= threshold;
+      const color     = i < 14 ? "#b87333" : i < 17 ? "#d4935f" : "#c0392b";
       gsap.to(seg, {
         background: active ? color : "rgba(44,36,32,.08)",
-        boxShadow: active ? `0 0 6px ${color}80` : "none",
-        opacity: active ? 1 : .35,
+        boxShadow:  active ? `0 0 6px ${color}80` : "none",
+        opacity:    active ? 1 : .35,
         duration: .2, ease: "power1.out", delay: i * .015,
       });
     });
 
-    const thresholds = [0, 25, 50, 100];
+    /* Evenly distribute dot thresholds across 0–100 */
+    const n = dotLabels.length;
+    const thresholds = dotLabels.map((_, i) =>
+      n === 1 ? 100 : Math.round((i / (n - 1)) * 100)
+    );
     dotRefs.current.forEach((dot, i) => {
       if (!dot) return;
       const active = progress >= thresholds[i];
@@ -514,9 +200,8 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
         duration: .3, ease: "back.out(2)", delay: i * .04,
       });
     });
-  }, [progress, show]);
+  }, [progress, show, dotLabels]);
 
-  const dotLabels = ["Reading", "Parsing", "Mapping", "Done"];
   const SEG_COUNT = 20;
 
   return (
@@ -529,7 +214,7 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
       pointerEvents: show ? "all" : "none",
       opacity: 0,
     }}>
-      {/* ── Instrument-panel card ── */}
+      {/* Instrument-panel card */}
       <div style={{
         width: 400, padding: "48px 40px 40px",
         borderRadius: 30,
@@ -543,8 +228,7 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
         display: "flex", flexDirection: "column", alignItems: "center",
         position: "relative",
       }}>
-
-        {/* brass corner rivets */}
+        {/* Brass corner rivets */}
         {[{top:16,left:16},{top:16,right:16},{bottom:16,left:16},{bottom:16,right:16}].map((pos,i) => (
           <div key={i} style={{
             position: "absolute", ...pos,
@@ -559,7 +243,7 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
           </div>
         ))}
 
-        {/* etched label plate */}
+        {/* Etched label plate */}
         <div style={{
           fontFamily: "'DM Mono', monospace",
           fontSize: 8, fontWeight: 500, letterSpacing: ".25em", textTransform: "uppercase",
@@ -568,9 +252,9 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
           background: "linear-gradient(145deg, #d8d0c0, #e0d8c8)",
           boxShadow: "inset 1px 1px 3px rgba(0,0,0,.2), inset -1px -1px 2px rgba(255,255,255,.5)",
           border: "1px solid rgba(0,0,0,.06)",
-        }}>✦ GEMINI AI MAPPING</div>
+        }}>{title}</div>
 
-        {/* ── Digital LCD Screen ── */}
+        {/* LCD Screen */}
         <div style={{
           position: "relative", width: "100%",
           borderRadius: 14,
@@ -585,23 +269,17 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
           marginBottom: 20,
           overflow: "hidden",
         }}>
-          {/* screen glow */}
           <div ref={glowRef} style={{
-            position: "absolute", inset: 0,
-            borderRadius: 12,
+            position: "absolute", inset: 0, borderRadius: 12,
             background: "radial-gradient(ellipse at 50% 40%, rgba(184,115,51,.15) 0%, transparent 70%)",
             opacity: .15, pointerEvents: "none",
           }} />
-
-          {/* scanline */}
           <div ref={scanRef} style={{
             position: "absolute", left: 0, right: 0,
             height: "8%", top: "-2%",
             background: "linear-gradient(180deg, transparent, rgba(184,115,51,.06), transparent)",
             pointerEvents: "none",
           }} />
-
-          {/* grid texture */}
           <div style={{
             position: "absolute", inset: 0, borderRadius: 12,
             backgroundImage:
@@ -611,7 +289,7 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
             pointerEvents: "none",
           }} />
 
-          {/* top bar */}
+          {/* Top bar */}
           <div style={{
             display: "flex", justifyContent: "space-between", alignItems: "center",
             marginBottom: 16, position: "relative",
@@ -620,7 +298,7 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
               fontFamily: "'DM Mono', monospace",
               fontSize: 7, letterSpacing: ".3em", textTransform: "uppercase",
               color: "rgba(184,115,51,.4)",
-            }}>AI:GEMINI</div>
+            }}>{statusLabel}</div>
             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
               <div style={{
                 width: 5, height: 5, borderRadius: "50%",
@@ -633,11 +311,11 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
                 fontFamily: "'DM Mono', monospace",
                 fontSize: 7, letterSpacing: ".2em", textTransform: "uppercase",
                 color: progress > 0 ? "rgba(39,174,96,.6)" : "rgba(184,115,51,.4)",
-              }}>{progress >= 100 ? "DONE" : progress > 0 ? "MAPPING" : "IDLE"}</div>
+              }}>{progress >= 100 ? "DONE" : progress > 0 ? statusRunning : "IDLE"}</div>
             </div>
           </div>
 
-          {/* big digital percentage */}
+          {/* Big percentage */}
           <div style={{
             display: "flex", alignItems: "baseline", justifyContent: "center",
             gap: 4, marginBottom: 14, position: "relative",
@@ -655,7 +333,7 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
             }}>%</span>
           </div>
 
-          {/* stage readout */}
+          {/* Stage readout */}
           <div style={{
             fontFamily: "'DM Mono', monospace",
             fontSize: 10, letterSpacing: ".18em", textTransform: "uppercase",
@@ -663,14 +341,13 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
             textAlign: "center", marginBottom: 16,
             textShadow: "0 0 8px rgba(184,115,51,.3)",
           }}>
-            {">"} {stage || "Connecting to Gemini..."}
+            {">"} {stage || stageDefault}
           </div>
 
-          {/* segmented LED bar */}
+          {/* LED segment bar */}
           <div style={{
             display: "flex", gap: 3, width: "100%", height: 14,
-            padding: "3px 4px",
-            borderRadius: 5,
+            padding: "3px 4px", borderRadius: 5,
             background: "rgba(0,0,0,.3)",
             boxShadow: "inset 2px 2px 6px rgba(0,0,0,.5), inset -1px -1px 3px rgba(255,255,255,.02)",
           }}>
@@ -678,13 +355,12 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
               <div key={i} ref={el => segRefs.current[i] = el} style={{
                 flex: 1, borderRadius: 2,
                 background: "rgba(44,36,32,.08)",
-                opacity: .35,
-                transition: "none",
+                opacity: .35, transition: "none",
               }} />
             ))}
           </div>
 
-          {/* bottom stats row */}
+          {/* Bottom stats row */}
           <div style={{
             display: "flex", justifyContent: "space-between", marginTop: 14,
             position: "relative",
@@ -692,7 +368,7 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
             {[
               { label: "ETA", value: progress >= 100 ? "00:00" : (eta != null && eta > 0) ? `${Math.floor(eta / 60)}:${String(Math.floor(eta % 60)).padStart(2, '0')}` : progress > 0 ? "calc..." : "--:--" },
               { label: "PROC", value: `${Math.min(progress, 100)}%` },
-              { label: "MEM", value: "OK" },
+              { label: "MEM",  value: "OK" },
             ].map((stat) => (
               <div key={stat.label} style={{ textAlign: "center" }}>
                 <div style={{
@@ -712,7 +388,7 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
           </div>
         </div>
 
-        {/* brass progress bar */}
+        {/* Brass progress bar */}
         <div style={{
           width: "100%", height: 8, borderRadius: 4,
           background: "linear-gradient(145deg, #c0b8a6, #d0c8b8)",
@@ -727,13 +403,13 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
           }} />
         </div>
 
-        {/* step dots */}
+        {/* Step dots */}
         <div style={{
           display: "flex", justifyContent: "space-between",
-          width: "100%", padding: "0 28px",
+          width: "100%", padding: dotPadding,
         }}>
           {dotLabels.map((label, i) => (
-            <div key={label} style={{
+            <div key={`${label}-${i}`} style={{
               display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
             }}>
               <div ref={el => dotRefs.current[i] = el} style={{
@@ -758,8 +434,7 @@ const GeminiLoader = ({ progress, show, stage = "", eta }) => {
    TOGGLE SWITCH
 ───────────────────────────────────────── */
 const Toggle = ({ active, onClick, color = "var(--copper)" }) => {
-  const knobRef = useRef(null);
-  const trackRef = useRef(null);
+  const knobRef  = useRef(null);
 
   useEffect(() => {
     if (!knobRef.current) return;
@@ -768,7 +443,6 @@ const Toggle = ({ active, onClick, color = "var(--copper)" }) => {
 
   return (
     <div
-      ref={trackRef}
       onClick={onClick}
       style={{
         width: 44, height: 24, borderRadius: 12,
@@ -932,13 +606,12 @@ const DropZone = ({ label, file, onFile, inputRef }) => {
 };
 
 /* ─────────────────────────────────────────
-   STEPPER HEADER
+   STEPPER HEADER — 3 steps
 ───────────────────────────────────────── */
 const StepperHeader = ({ active }) => {
-  const steps = ["Upload Files", "Review Mapping"];
+  const steps = ["Upload Files", "Transform", "Review Mapping"];
   return (
     <div style={{ display: "flex", alignItems: "center", marginBottom: 44 }}>
-
       {steps.map((s, i) => (
         <React.Fragment key={s}>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
@@ -967,10 +640,10 @@ const StepperHeader = ({ active }) => {
           {i < steps.length - 1 && (
             <div style={{
               flex: 1, height: 2, margin: "0 18px", marginBottom: 20,
-              background: active >= 1
+              background: active > i
                 ? "linear-gradient(90deg, #c8843a, #d4935f)"
                 : "var(--warm-mid)",
-              boxShadow: active >= 1 ? "0 0 8px rgba(184,115,51,.6)" : "none",
+              boxShadow: active > i ? "0 0 8px rgba(184,115,51,.6)" : "none",
               borderRadius: 1,
               transition: "all .6s ease",
             }} />
@@ -985,28 +658,37 @@ const StepperHeader = ({ active }) => {
    MAIN COMPONENT
 ───────────────────────────────────────── */
 export default function PostValidationStepper() {
-  const [activeStep,    setActiveStep]    = useState(0);
-  const [legacyFile,    setLegacyFile]    = useState(null);
-  const [oracleFile,    setOracleFile]    = useState(null);
-  const [configFile,    setConfigFile]    = useState(null);
-  const [configData,    setConfigData]    = useState(null);
-  const [rows,          setRows]          = useState([]);
-  const [targetOptions, setTargetOptions] = useState([]);
-  const [loading,       setLoading]       = useState(false);
-  const [loaderType,    setLoaderType]    = useState("validation"); // "validation" | "gemini"
-  const [progress,      setProgress]      = useState(0);
-  const [stage,         setStage]         = useState("");
-  const [eta,            setEta]            = useState(null);
-  const [error,         setError]         = useState("");
-  const [outputAsZip,   setOutputAsZip]   = useState(false);
+  const [activeStep,          setActiveStep]          = useState(0);
+  const [legacyFile,          setLegacyFile]          = useState(null);
+  const [oracleFile,          setOracleFile]          = useState(null);
+  const [configFile,          setConfigFile]          = useState(null);
+  const [configData,          setConfigData]          = useState(null);
+  const [mappingFile,         setMappingFile]         = useState(null);
+  const [rows,                setRows]                = useState([]);
+  const [targetOptions,       setTargetOptions]       = useState([]);
+  const [loading,             setLoading]             = useState(false);
+  const [loaderType,          setLoaderType]          = useState("validation"); // "validation" | "gemini" | "transform"
+  const [progress,            setProgress]            = useState(0);
+  const [stage,               setStage]               = useState("");
+  const [eta,                 setEta]                 = useState(null);
+  const [error,               setError]               = useState("");
+  const [outputAsZip,         setOutputAsZip]         = useState(false);
 
-  const cardRef     = useRef(null);
-  const step1Ref    = useRef(null);
-  const step2Ref    = useRef(null);
-  const sourceInput = useRef();
-  const targetInput = useRef();
-  const configInput = useRef();
-  const rowRefs     = useRef([]);
+  /* Transform-step state */
+  const [transformedFile,     setTransformedFile]     = useState(null);    // File object returned from /transform
+  const [transformStats,      setTransformStats]      = useState(null);    // { rulesApplied, cellsChanged, columnsChanged, totalRules }
+  const [transformedFileName, setTransformedFileName] = useState("");
+
+  const cardRef        = useRef(null);
+  const step1Ref       = useRef(null);   // Step 0: Upload Files
+  const step2Ref       = useRef(null);   // Step 1: Transform (NEW)
+  const step3Ref       = useRef(null);   // Step 2: Review Mapping
+  const activeStepRef  = useRef(0);      // mirror of activeStep for stable closures
+  const sourceInput    = useRef();
+  const targetInput    = useRef();
+  const configInput    = useRef();
+  const mappingInput   = useRef();
+  const rowRefs        = useRef([]);
 
   /* ── Config file handler ── */
   const handleConfigUpload = useCallback((file) => {
@@ -1032,8 +714,8 @@ export default function PostValidationStepper() {
 
   /* ── Save current config ── */
   const handleSaveConfig = useCallback(() => {
-    const keys = rows.filter(r => r.isKey).map(r => r.source);
-    const mappings = {};
+    const keys         = rows.filter(r => r.isKey).map(r => r.source);
+    const mappings     = {};
     rows.forEach(r => {
       if (r.target && r.target.trim() !== "") mappings[r.source] = r.target;
     });
@@ -1045,17 +727,17 @@ export default function PostValidationStepper() {
       customerName: configData?.customerName || "default",
       instanceName: configData?.instanceName || "default",
       mappings,
-      keyColumns: keys,
+      keyColumns:      keys,
       dateColumns,
       validateColumns: validateCols,
-      includeColumns: includeCols,
+      includeColumns:  includeCols,
       outputAsZip,
-      ...(configData?.hireActions       && { hireActions: configData.hireActions }),
-      ...(configData?.rehireActions      && { rehireActions: configData.rehireActions }),
-      ...(configData?.termActions        && { termActions: configData.termActions }),
-      ...(configData?.globalTransferActions && { globalTransferActions: configData.globalTransferActions }),
-      ...(configData?.statusTypes        && { statusTypes: configData.statusTypes }),
-      ...(configData?.assignmentStatusRules && { assignmentStatusRules: configData.assignmentStatusRules }),
+      ...(configData?.hireActions            && { hireActions:            configData.hireActions }),
+      ...(configData?.rehireActions           && { rehireActions:          configData.rehireActions }),
+      ...(configData?.termActions             && { termActions:            configData.termActions }),
+      ...(configData?.globalTransferActions   && { globalTransferActions:  configData.globalTransferActions }),
+      ...(configData?.statusTypes             && { statusTypes:            configData.statusTypes }),
+      ...(configData?.assignmentStatusRules   && { assignmentStatusRules:  configData.assignmentStatusRules }),
     };
 
     const blob = new Blob([JSON.stringify(config, null, 2)], { type: "application/json" });
@@ -1077,31 +759,39 @@ export default function PostValidationStepper() {
     );
   }, []);
 
-  /* Step transition */
-  const transitionToStep = useCallback((step) => {
-    const outEl = step === 1 ? step1Ref.current : step2Ref.current;
-    const inEl  = step === 1 ? step2Ref.current : step1Ref.current;
+  /* Step transition — generalized for 3 steps.
+     Uses activeStepRef (not activeStep state) so the function is stable
+     across re-renders and never captures a stale step index in async callbacks. */
+  const transitionToStep = useCallback((targetStep) => {
+    const currentStep = activeStepRef.current;
+    const refs        = [step1Ref, step2Ref, step3Ref];
+    const outEl       = refs[currentStep]?.current;
+    const inEl        = refs[targetStep]?.current;
+    if (!outEl || !inEl) return;
+
+    const goingForward = targetStep > currentStep;
 
     gsap.to(outEl, {
-      x: step === 1 ? -60 : 60,
+      x: goingForward ? -60 : 60,
       opacity: 0,
       duration: .35,
       ease: "power2.in",
       onComplete: () => {
-        setActiveStep(step);
-        gsap.set(inEl, { display: "block" });
+        activeStepRef.current = targetStep;   // keep ref in sync first
+        setActiveStep(targetStep);
+        gsap.set(inEl,  { display: "block" });
         gsap.set(outEl, { display: "none" });
         gsap.fromTo(inEl,
-          { x: step === 1 ? 60 : -60, opacity: 0 },
+          { x: goingForward ? 60 : -60, opacity: 0 },
           { x: 0, opacity: 1, duration: .5, ease: "expo.out" }
         );
       }
     });
-  }, []);
+  }, []);  // stable — reads live value via ref, no deps needed
 
-  /* Row stagger */
+  /* Row stagger (fires when entering step 2 — Review Mapping) */
   useEffect(() => {
-    if (activeStep !== 1 || rowRefs.current.length === 0) return;
+    if (activeStep !== 2 || rowRefs.current.length === 0) return;
     const validRefs = rowRefs.current.filter(Boolean);
     gsap.fromTo(validRefs,
       { x: 30, opacity: 0 },
@@ -1109,154 +799,196 @@ export default function PostValidationStepper() {
     );
   }, [activeStep, rows]);
 
-const runMapping = async () => {
-  if (!legacyFile || !oracleFile) {
-    setError("Please upload both files.");
-    return;
-  }
+  /* ── Run Transform — Step 0 → Step 1 ── */
+  const runTransform = useCallback(async () => {
+    if (!legacyFile || !mappingFile) return;
 
-  setError("");
-  setLoaderType("gemini");
-  setLoading(true);
-  setProgress(0);
-  setStage("Uploading files");
+    setError("");
+    setLoaderType("transform");
+    setLoading(true);
+    setProgress(0);
+    setStage("Uploading files");
 
-  try {
-    /* ── Step 1: Upload files → get job_id ── */
-    const form = new FormData();
-    form.append("legacyFile", legacyFile);
-    form.append("oracleFile", oracleFile);
-    form.append("legacySheet", "");
-    form.append("oracleSheet", "");
-    form.append("customerName", configData?.customerName || "default");
-    form.append("instanceName", configData?.instanceName || "default");
-    if (configFile) form.append("configFile", configFile);
-    if (configData) form.append("configData", JSON.stringify(configData));
+    try {
+      const form = new FormData();
+      form.append("sourceFile",  legacyFile);
+      form.append("mappingFile", mappingFile);
 
-    let lastUpdate = 0;
-
-    const submitRes = await api.post(
-      "/excel/columns/mapping",
-      form,
-      {
-        onUploadProgress: e => {
-          if (!e.total) return;
-          const now = Date.now();
-          if (now - lastUpdate < 100) return;
-          lastUpdate = now;
-          const pct = Math.round((e.loaded * 100) / e.total);
-          // Upload is 0–5% of total progress
-          const mappedPct = Math.round(pct * 0.05);
-          requestAnimationFrame(() => {
-            setProgress(mappedPct);
+      const res = await api.post(
+        "/excel/post_validation/transform",
+        form,
+        {
+          responseType: "blob",
+          timeout: 300_000,
+          onUploadProgress: e => {
+            if (!e.total) return;
+            const pct = Math.round((e.loaded / e.total) * 40);
+            setProgress(pct);
             setStage("Uploading files");
-          });
+          },
         }
+      );
+
+      setProgress(80);
+      setStage("Applying transformation rules");
+
+      /* Parse stats from response headers (Axios lowercases header names) */
+      const rulesApplied   = parseInt(res.headers["x-transform-rules-applied"]   ?? "0", 10);
+      const cellsChanged   = parseInt(res.headers["x-transform-cells-changed"]   ?? "0", 10);
+      const columnsChanged = parseInt(res.headers["x-transform-columns-changed"] ?? "0", 10);
+      const totalRules     = parseInt(res.headers["x-transform-total-rules"]     ?? "0", 10);
+
+      setTransformStats({ rulesApplied, cellsChanged, columnsChanged, totalRules });
+
+      /* Derive filename */
+      let fname = `${legacyFile.name.replace(/\.[^.]+$/, "")}_transformed.xlsx`;
+      const disposition = res.headers["content-disposition"];
+      if (disposition && disposition.includes("filename=")) {
+        fname = disposition.split("filename=")[1].replace(/"/g, "").trim();
       }
-    );
+      setTransformedFileName(fname);
 
-    const jobId = submitRes.data?.job_id;
-    if (!jobId) throw new Error("No job_id returned from server");
+      /* Store as File so FormData later sends the correct filename */
+      const blob = new Blob([res.data], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const file = new File([blob], fname, { type: blob.type });
+      setTransformedFile(file);
 
-    /* ── Step 2: Poll for real progress ── */
-    setProgress(5);
-    setStage("Processing");
+      setProgress(100);
+      setStage("Done");
 
-    const result = await new Promise((resolve, reject) => {
-      const poll = async () => {
-        try {
-          const { data } = await api.get(`/excel/columns/mapping/status/${jobId}`);
+      setTimeout(() => {
+        setLoading(false);
+        transitionToStep(1);
+        setProgress(0);
+      }, 400);
 
-          setProgress(data.progress || 0);
-          if (data.stage) setStage(data.stage);
-          if (data.eta_seconds != null) setEta(data.eta_seconds);
-
-          if (data.status === "complete") {
-            resolve(data.result);
-          } else if (data.status === "failed") {
-            reject(new Error(data.error || "Mapping failed"));
-          } else {
-            setTimeout(poll, 600);
-          }
-        } catch (pollErr) {
-          reject(pollErr);
-        }
-      };
-      poll();
-    });
-
-    /* ── Step 3: Parse result ── */
-    const legacyCols = Array.isArray(result?.legacy_columns)
-      ? result.legacy_columns : [];
-    const oracleCols = Array.isArray(result?.oracle_columns)
-      ? result.oracle_columns : [];
-    const suggested = result?.suggested_mapping || {};
-    const dateCols = result?.date_columns || [];
-
-    if (!legacyCols.length || !oracleCols.length)
-      throw new Error("Invalid API response");
-
-    /* ── Step 4: Set state ── */
-    setTargetOptions(oracleCols);
-    /* Apply config overrides if available */
-    const cfgMappings     = configData?.mappings         || {};
-    const cfgKeys         = configData?.keyColumns        || [];
-    const cfgDateCols     = configData?.dateColumns       || [];
-    const cfgValidateCols = configData?.validateColumns   || [];
-    const cfgIncludeCols  = configData?.includeColumns    || [];
-    const hasConfigOverride = Object.keys(cfgMappings).length > 0;
-
-    setRows(
-      legacyCols.map((col, i) => {
-        /* Config overrides Gemini suggestions when present */
-        const mappedTarget = hasConfigOverride
-          ? (cfgMappings[col] != null ? cfgMappings[col] : "")
-          : (suggested[col] != null ? suggested[col] : "");
-        const hasMapping = mappedTarget !== "";
-        return {
-          id: i,
-          source: col,
-          target: mappedTarget,
-          isKey:     cfgKeys.includes(col),
-          isDate:    hasConfigOverride ? cfgDateCols.includes(col) : dateCols.includes(col),
-          validate:  hasConfigOverride ? cfgValidateCols.includes(col) : hasMapping,
-          include:   cfgIncludeCols.includes(col),
-        };
-      })
-    );
-
-    if (configData?.outputAsZip != null) setOutputAsZip(configData.outputAsZip);
-
-    setProgress(100);
-    setStage("Done");
-
-    setTimeout(() => {
+    } catch (err) {
+      console.error("Transform error:", err);
+      if (err.response?.status === 400)      setError("Invalid file format or mapping structure");
+      else if (err.response?.status === 500) setError("Server error during transformation");
+      else if (err.message)                  setError(err.message);
+      else                                   setError("Transformation request failed");
       setLoading(false);
-      transitionToStep(1);
-      setProgress(0);
-    }, 400);
+    }
+  }, [legacyFile, mappingFile]);
 
-  } catch (err) {
-    console.error("Mapping error:", err);
-
-    if (err.response) {
-      const code = err.response.status;
-      if (code === 400) setError("Invalid Excel format");
-      else if (code === 422) setError("Missing required fields");
-      else if (code === 500) setError("Server processing error");
-      else setError("Unexpected server error");
-    } else if (err.message) {
-      setError(err.message);
-    } else if (err.request) {
-      setError("Server not reachable");
-    } else {
-      setError("Request failed");
+  /* ── Run Mapping — Step 1 → Step 2 ── */
+  const runMapping = async () => {
+    if (!legacyFile || !oracleFile) {
+      setError("Please upload both files.");
+      return;
     }
 
-    setLoading(false);
-  }
-};
+    setError("");
+    setLoaderType("gemini");
+    setLoading(true);
+    setProgress(0);
+    setStage("Uploading files");
 
+    /* Use the transformed file if one was produced, otherwise the original */
+    const sourceForMapping = transformedFile || legacyFile;
+
+    try {
+      const form = new FormData();
+      form.append("legacyFile",    sourceForMapping);
+      form.append("oracleFile",    oracleFile);
+      form.append("legacySheet",   "");
+      form.append("oracleSheet",   "");
+      form.append("customerName",  configData?.customerName || "default");
+      form.append("instanceName",  configData?.instanceName || "default");
+      if (configFile)  form.append("configFile",  configFile);
+      if (configData)  form.append("configData",  JSON.stringify(configData));
+      // mappingFile is a value-transformation file, not a column mapping file — do not send here
+
+      let lastUpdate = 0;
+
+      const submitRes = await api.post(
+        "/excel/post_validation/data_mapping",
+        form,
+        {
+          onUploadProgress: e => {
+            if (!e.total) return;
+            const now = Date.now();
+            if (now - lastUpdate < 100) return;
+            lastUpdate = now;
+            const pct       = Math.round((e.loaded * 100) / e.total);
+            const mappedPct = Math.round(pct * 0.05);
+            requestAnimationFrame(() => {
+              setProgress(mappedPct);
+              setStage("Uploading files");
+            });
+          }
+        }
+      );
+
+      const result = submitRes.data;
+
+      const legacyCols = Array.isArray(result?.legacy_columns)  ? result.legacy_columns  : [];
+      const oracleCols = Array.isArray(result?.oracle_columns)  ? result.oracle_columns  : [];
+      const suggested  = result?.suggested_mapping || {};
+      const dateCols   = result?.date_columns      || [];
+
+      if (!legacyCols.length || !oracleCols.length)
+        throw new Error("Invalid API response");
+
+      setTargetOptions(oracleCols);
+
+      const cfgMappings     = configData?.mappings         || {};
+      const cfgKeys         = configData?.keyColumns        || [];
+      const cfgDateCols     = configData?.dateColumns       || [];
+      const cfgValidateCols = configData?.validateColumns   || [];
+      const cfgIncludeCols  = configData?.includeColumns    || [];
+      const hasConfigOverride = Object.keys(cfgMappings).length > 0;
+
+      setRows(
+        legacyCols.map((col, i) => {
+          const mappedTarget = hasConfigOverride
+            ? (cfgMappings[col] != null ? cfgMappings[col] : "")
+            : (suggested[col]  != null ? suggested[col]  : "");
+          const hasMapping = mappedTarget !== "";
+          return {
+            id:       i,
+            source:   col,
+            target:   mappedTarget,
+            isKey:    cfgKeys.includes(col),
+            isDate:   hasConfigOverride ? cfgDateCols.includes(col)     : dateCols.includes(col),
+            validate: hasConfigOverride ? cfgValidateCols.includes(col) : hasMapping,
+            include:  cfgIncludeCols.includes(col),
+          };
+        })
+      );
+
+      if (configData?.outputAsZip != null) setOutputAsZip(configData.outputAsZip);
+
+      setProgress(100);
+      setStage("Done");
+
+      setTimeout(() => {
+        setLoading(false);
+        transitionToStep(2);   // → Step 2: Review Mapping
+        setProgress(0);
+      }, 400);
+
+    } catch (err) {
+      console.error("Mapping error:", err);
+      if (err.response) {
+        const code = err.response.status;
+        if      (code === 400) setError("Invalid Excel format");
+        else if (code === 422) setError("Missing required fields");
+        else if (code === 500) setError("Server processing error");
+        else                   setError("Unexpected server error");
+      } else if (err.message) {
+        setError(err.message);
+      } else if (err.request) {
+        setError("Server not reachable");
+      } else {
+        setError("Request failed");
+      }
+      setLoading(false);
+    }
+  };
 
   const updateRow = (id, field, val) => {
     setRows(r => r.map(x => x.id === id ? { ...x, [field]: val } : x));
@@ -1269,180 +1001,173 @@ const runMapping = async () => {
     }
   };
 
-const handleValidate = async () => {
-  const keys = rows.filter(r => r.isKey).map(r => r.source);
+  /* ── Validate (Step 2 → download result) ── */
+  const handleValidate = async () => {
+    const keys = rows.filter(r => r.isKey).map(r => r.source);
 
-  if (keys.length === 0) {
-    setError("Select at least one Key column before validating.");
-    return;
-  }
-
-  // Check that all key columns have valid target mappings
-  const keysWithoutMapping = rows.filter(r => r.isKey && (!r.target || r.target.trim() === ""));
-  if (keysWithoutMapping.length > 0) {
-    setError(`Key column(s) missing target mapping: ${keysWithoutMapping.map(r => r.source).join(", ")}`);
-    return;
-  }
-
-  try {
-    setLoaderType("validation");
-    setLoading(true);
-    setProgress(0);
-    setStage("Uploading files");
-    setError("");
-
-    // Only include rows that have a mapping AND validate is enabled
-    const activeRows = rows.filter(r => r.validate && r.target && r.target.trim() !== "");
-
-    if (activeRows.length === 0) {
-      setError("No columns to validate. Assign target mappings and enable Validate.");
+    if (keys.length === 0) {
+      setError("Select at least one Key column before validating.");
       return;
     }
 
-    const mappings = {};
-    activeRows.forEach(r => {
-      mappings[r.source] = r.target;
-    });
-
-    const includedColumns = activeRows.filter(r => r.include).map(r => r.source);
-    const dateColumns = activeRows.filter(r => r.isDate).map(r => r.source);
-    const validateColumns = activeRows.map(r => r.source);
-
-    const form = new FormData();
-
-    /* FILES */
-    form.append("legacyFile", legacyFile);
-    form.append("oracleFile", oracleFile);
-
-    /* REQUIRED META */
-    form.append("customerName", configData?.customerName || "default");
-    form.append("instanceName", configData?.instanceName || "default");
-    if (configFile) form.append("configFile", configFile);
-    if (configData) form.append("configData", JSON.stringify(configData));
-
-    /* ARRAYS + OBJECTS (STRINGIFIED JSON) */
-    form.append("mappings", JSON.stringify(mappings));
-    form.append("keyColumns", JSON.stringify(keys));
-    form.append("includedColumns", JSON.stringify(includedColumns));
-    form.append("dateColumns", JSON.stringify(dateColumns));
-    form.append("timestampColumns", JSON.stringify([]));
-    form.append("dateColumnstarget", JSON.stringify(dateColumns));
-    form.append("timestampColumnstarget", JSON.stringify([]));
-
-    /* OPTIONAL */
-    form.append("legacySheet", "");
-    form.append("oracleSheet", "");
-    form.append("includeSourceTargetFiles", !outputAsZip);
-    form.append("outputAsZip", outputAsZip);
-
-    /* ── Step 1: Submit job ── */
-    const submitRes = await api.post(
-      "/excel/post_validation/validate_large",
-      form,
-      {
-        timeout: 300000, // 5 min for upload
-        onUploadProgress: e => {
-          if (!e.total) return;
-          const pct = Math.min(Math.round((e.loaded * 100) / e.total), 100);
-          // Upload progress shown as 0-2% (small relative to processing)
-          setProgress(Math.round(pct * 0.02));
-          setStage("Uploading files");
-        }
-      }
-    );
-
-    const { job_id } = submitRes.data;
-    if (!job_id) throw new Error("No job_id returned from server");
-
-    /* ── Step 2: Poll for progress ── */
-    setStage("Processing started");
-    setProgress(2);
-
-    const POLL_INTERVAL = 1500; // 1.5 seconds
-    const MAX_POLL_TIME = 30 * 60 * 1000; // 30 minutes
-    const pollStart = Date.now();
-
-    const pollStatus = () => new Promise((resolve, reject) => {
-      const interval = setInterval(async () => {
-        try {
-          if (Date.now() - pollStart > MAX_POLL_TIME) {
-            clearInterval(interval);
-            reject(new Error("Validation timed out after 30 minutes"));
-            return;
-          }
-
-          const statusRes = await api.get(
-            `/excel/post_validation/status/${job_id}`,
-            { timeout: 10000 }
-          );
-
-          const { status, progress: jobProgress, stage: jobStage, error: jobError } = statusRes.data;
-
-          setProgress(jobProgress || 0);
-          setStage(jobStage || "");
-          if (statusRes.data.eta_seconds != null) setEta(statusRes.data.eta_seconds);
-
-          if (status === "complete") {
-            clearInterval(interval);
-            resolve();
-          } else if (status === "failed") {
-            clearInterval(interval);
-            reject(new Error(jobError || "Validation failed on the server"));
-          }
-          // status === "running" → keep polling
-        } catch (pollErr) {
-          // Network blip — don't stop polling, just log
-          console.warn("Poll error (will retry):", pollErr.message);
-        }
-      }, POLL_INTERVAL);
-    });
-
-    await pollStatus();
-
-    /* ── Step 3: Download result ── */
-    setStage("Downloading results");
-
-    const downloadRes = await api.get(
-      `/excel/post_validation/download/${job_id}`,
-      {
-        responseType: "blob",
-        timeout: 600000, // 10 min for large file download
-      }
-    );
-
-    const contentType = downloadRes.headers["content-type"] || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    const blob = new Blob([downloadRes.data], { type: contentType });
-
-    let filename = "MythicsValidationResults.xlsx";
-    const disposition = downloadRes.headers["content-disposition"];
-    if (disposition && disposition.includes("filename=")) {
-      filename = disposition
-        .split("filename=")[1]
-        .replace(/"/g, "")
-        .trim();
+    const keysWithoutMapping = rows.filter(r => r.isKey && (!r.target || r.target.trim() === ""));
+    if (keysWithoutMapping.length > 0) {
+      setError(`Key column(s) missing target mapping: ${keysWithoutMapping.map(r => r.source).join(", ")}`);
+      return;
     }
 
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(url);
+    try {
+      setLoaderType("validation");
+      setLoading(true);
+      setProgress(0);
+      setStage("Uploading files");
+      setError("");
 
-    setProgress(100);
-    setStage("Complete");
+      const activeRows = rows.filter(r => r.validate && r.target && r.target.trim() !== "");
 
-  } catch (err) {
-    console.error(err);
-    setError(err.message || "Validation failed");
-  } finally {
-    setLoading(false);
-    setTimeout(() => { setStage(""); }, 2000);
-  }
-};
+      if (activeRows.length === 0) {
+        setError("No columns to validate. Assign target mappings and enable Validate.");
+        return;
+      }
 
+      const mappings        = {};
+      activeRows.forEach(r => { mappings[r.source] = r.target; });
+      const includedColumns = activeRows.filter(r => r.include).map(r => r.source);
+      const dateColumns     = activeRows.filter(r => r.isDate).map(r => r.source);
+
+      /* Use the transformed file if one was produced */
+      const sourceForValidation = transformedFile || legacyFile;
+
+      const form = new FormData();
+      form.append("legacyFile",              sourceForValidation);
+      form.append("oracleFile",              oracleFile);
+      form.append("customerName",            configData?.customerName || "default");
+      form.append("instanceName",            configData?.instanceName || "default");
+      if (configFile)  form.append("configFile",  configFile);
+      if (configData)  form.append("configData",  JSON.stringify(configData));
+      if (mappingFile) form.append("mappingFile", mappingFile);
+      form.append("mappings",                JSON.stringify(mappings));
+      form.append("keyColumns",              JSON.stringify(keys));
+      form.append("includedColumns",         JSON.stringify(includedColumns));
+      form.append("dateColumns",             JSON.stringify(dateColumns));
+      form.append("timestampColumns",        JSON.stringify([]));
+      form.append("dateColumnstarget",       JSON.stringify(dateColumns));
+      form.append("timestampColumnstarget",  JSON.stringify([]));
+      form.append("legacySheet",             "");
+      form.append("oracleSheet",             "");
+      form.append("includeSourceTargetFiles", !outputAsZip);
+      form.append("outputAsZip",             outputAsZip);
+
+      const submitRes = await api.post(
+        "/excel/post_validation/validate_large",
+        form,
+        {
+          timeout: 300_000,
+          onUploadProgress: e => {
+            if (!e.total) return;
+            const pct = Math.min(Math.round((e.loaded * 100) / e.total), 100);
+            setProgress(Math.round(pct * 0.02));
+            setStage("Uploading files");
+          }
+        }
+      );
+
+      const { job_id } = submitRes.data;
+      if (!job_id) throw new Error("No job_id returned from server");
+
+      setStage("Processing started");
+      setProgress(2);
+
+      const POLL_INTERVAL = 1500;
+      const MAX_POLL_TIME = 30 * 60 * 1000;
+      const pollStart     = Date.now();
+
+      const pollStatus = () => new Promise((resolve, reject) => {
+        const interval = setInterval(async () => {
+          try {
+            if (Date.now() - pollStart > MAX_POLL_TIME) {
+              clearInterval(interval);
+              reject(new Error("Validation timed out after 30 minutes"));
+              return;
+            }
+
+            const statusRes = await api.get(
+              `/excel/post_validation/status/${job_id}`,
+              { timeout: 10000 }
+            );
+
+            const { status, progress: jobProgress, stage: jobStage, error: jobError } = statusRes.data;
+
+            setProgress(jobProgress || 0);
+            setStage(jobStage || "");
+            if (statusRes.data.eta_seconds != null) setEta(statusRes.data.eta_seconds);
+
+            if (status === "complete") {
+              clearInterval(interval);
+              resolve();
+            } else if (status === "failed") {
+              clearInterval(interval);
+              reject(new Error(jobError || "Validation failed on the server"));
+            }
+          } catch (pollErr) {
+            console.warn("Poll error (will retry):", pollErr.message);
+          }
+        }, POLL_INTERVAL);
+      });
+
+      await pollStatus();
+
+      setStage("Downloading results");
+
+      const downloadRes = await api.get(
+        `/excel/post_validation/download/${job_id}`,
+        { responseType: "blob", timeout: 600_000 }
+      );
+
+      const contentType = downloadRes.headers["content-type"]
+        || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      const blob = new Blob([downloadRes.data], { type: contentType });
+
+      let filename    = "MythicsValidationResults.xlsx";
+      const disposition = downloadRes.headers["content-disposition"];
+      if (disposition && disposition.includes("filename=")) {
+        filename = disposition.split("filename=")[1].replace(/"/g, "").trim();
+      }
+
+      const url  = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href  = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      setProgress(100);
+      setStage("Complete");
+
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Validation failed");
+    } finally {
+      setLoading(false);
+      setTimeout(() => { setStage(""); }, 2000);
+    }
+  };
+
+  /* ── Step 0 "Next" handler ── */
+  const handleNext = useCallback(() => {
+    setError("");
+    if (mappingFile) {
+      runTransform();   // internally calls transitionToStep(1) on success
+    } else {
+      /* No mapping file — skip transform, clear any stale transform state */
+      setTransformedFile(null);
+      setTransformStats(null);
+      setTransformedFileName("");
+      transitionToStep(1);
+    }
+  }, [mappingFile, runTransform]);
 
   const grid = {
     display: "grid",
@@ -1451,12 +1176,44 @@ const handleValidate = async () => {
     gap: "0 12px",
   };
 
+  /* ── Loader config by type ── */
+  const loaderProps = {
+    validation: {
+      title:         "VALIDATION ENGINE",
+      statusLabel:   "SYS:ACTIVE",
+      statusRunning: "RUNNING",
+      stageDefault:  "Initializing...",
+      dotLabels:     ["Upload", "Parse", "Compare", "Analyze", "Report", "Done"],
+      dotPadding:    "0 8px",
+    },
+    gemini: {
+      title:         "\u2726 GEMINI AI MAPPING",
+      statusLabel:   "AI:GEMINI",
+      statusRunning: "MAPPING",
+      stageDefault:  "Connecting to Gemini...",
+      dotLabels:     ["Reading", "Parsing", "Mapping", "Done"],
+      dotPadding:    "0 28px",
+    },
+    transform: {
+      title:         "\u2726 TRANSFORM ENGINE",
+      statusLabel:   "SYS:TRANSFORM",
+      statusRunning: "APPLYING",
+      stageDefault:  "Applying rules...",
+      dotLabels:     ["Upload", "Parse", "Apply", "Done"],
+      dotPadding:    "0 28px",
+    },
+  };
+  const lp = loaderProps[loaderType] || loaderProps.validation;
+
   return (
     <>
-      {loaderType === "gemini"
-        ? <GeminiLoader progress={progress} show={loading} stage={stage} eta={eta} />
-        : <ValidationLoader progress={progress} show={loading} stage={stage} eta={eta} />
-      }
+      <InstrumentPanelLoader
+        progress={progress}
+        show={loading}
+        stage={stage}
+        eta={eta}
+        {...lp}
+      />
 
       <div style={{
         flex: 1,
@@ -1503,7 +1260,9 @@ const handleValidate = async () => {
 
           <StepperHeader active={activeStep} />
 
-          {/* STEP 1 */}
+          {/* ═══════════════════════════════════════
+              STEP 0 — Upload Files
+          ═══════════════════════════════════════ */}
           <div ref={step1Ref}>
             <div style={{
               fontFamily: "'DM Serif Display', serif",
@@ -1512,14 +1271,15 @@ const handleValidate = async () => {
             <div style={{
               fontFamily: "'DM Mono', monospace",
               fontSize: 12, color: "var(--ink-lt)", letterSpacing: ".05em", marginBottom: 38,
-            }}>Provide source (legacy) and target (oracle) .xlsx or .csv files to begin mapping</div>
+            }}>Provide source (legacy) and target (oracle) .xlsx or .csv files to begin</div>
 
             <div style={{ display: "flex", gap: 24, marginBottom: 28 }}>
-              <DropZone label="Source File" file={legacyFile} onFile={setLegacyFile} inputRef={sourceInput} />
-              <DropZone label="Target File" file={oracleFile} onFile={setOracleFile} inputRef={targetInput} />
+              <DropZone label="Source File"  file={legacyFile}  onFile={setLegacyFile}  inputRef={sourceInput} />
+              <DropZone label="Target File"  file={oracleFile}  onFile={setOracleFile}  inputRef={targetInput} />
+              <DropZone label="Mapping File" file={mappingFile} onFile={setMappingFile} inputRef={mappingInput} />
             </div>
 
-            {/* ── Optional Config Upload ── */}
+            {/* Optional Config Upload */}
             <div
               onClick={() => configInput.current?.click()}
               onDragOver={e => e.preventDefault()}
@@ -1579,6 +1339,24 @@ const handleValidate = async () => {
                 onChange={e => { const f = e.target.files[0]; if (f) handleConfigUpload(f); e.target.value = ""; }} />
             </div>
 
+            {/* Mapping file info banner */}
+            {mappingFile && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 12,
+                padding: "10px 16px", borderRadius: 10, marginBottom: 20,
+                background: "rgba(184,115,51,.08)",
+                border: "1px solid rgba(184,115,51,.2)",
+              }}>
+                <span style={{ fontSize: 14 }}>⚡</span>
+                <div style={{
+                  fontFamily: "'DM Mono', monospace",
+                  fontSize: 9, color: "var(--ink-lt)", letterSpacing: ".06em",
+                }}>
+                  Mapping file detected — clicking <strong>Next</strong> will run value transformations before column mapping
+                </div>
+              </div>
+            )}
+
             <div style={{
               height: 1,
               background: "linear-gradient(90deg, transparent, var(--warm-mid), transparent)",
@@ -1597,15 +1375,188 @@ const handleValidate = async () => {
             )}
 
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <NeuBtn onClick={handleNext} disabled={!legacyFile || !oracleFile} accent>
+                Next →
+              </NeuBtn>
+            </div>
+          </div>
+
+          {/* ═══════════════════════════════════════
+              STEP 1 — Transform Review (NEW)
+          ═══════════════════════════════════════ */}
+          <div ref={step2Ref} style={{ display: "none" }}>
+            <div style={{
+              fontFamily: "'DM Serif Display', serif",
+              fontSize: 30, marginBottom: 6, color: "var(--ink)",
+            }}>Transform Preview</div>
+            <div style={{
+              fontFamily: "'DM Mono', monospace",
+              fontSize: 12, color: "var(--ink-lt)", letterSpacing: ".05em", marginBottom: 32,
+            }}>
+              {transformedFile
+                ? "Value transformations applied — review results before column mapping"
+                : "No mapping file was uploaded — transformation step skipped"}
+            </div>
+
+            {transformedFile ? (
+              <>
+                {/* Transformed file card */}
+                <div style={{
+                  padding: "18px 24px", borderRadius: 14, marginBottom: 24,
+                  background: "linear-gradient(145deg, #e0d8c8, #d2cab8)",
+                  boxShadow: "inset 2px 2px 6px rgba(0,0,0,.12), inset -2px -2px 5px rgba(255,255,255,.55), 4px 4px 12px rgba(0,0,0,.15), -3px -3px 8px rgba(255,255,255,.6)",
+                  border: "1px solid rgba(39,174,96,.3)",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+                    <div>
+                      <div style={{
+                        fontFamily: "'DM Mono', monospace",
+                        fontSize: 9, fontWeight: 600, letterSpacing: ".14em", textTransform: "uppercase",
+                        color: "#27ae60", marginBottom: 5,
+                      }}>✓ Transformed File Ready</div>
+                      <div style={{
+                        fontFamily: "'DM Mono', monospace",
+                        fontSize: 11, color: "var(--ink)",
+                      }}>{transformedFileName}</div>
+                    </div>
+
+                    {/* Download transformed file */}
+                    <button
+                      onClick={() => {
+                        if (!transformedFile) return;
+                        const url = URL.createObjectURL(transformedFile);
+                        const a   = document.createElement("a");
+                        a.href     = url;
+                        a.download = transformedFileName;
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                        URL.revokeObjectURL(url);
+                      }}
+                      style={{
+                        fontFamily: "'Instrument Sans', sans-serif",
+                        fontWeight: 700, fontSize: 10, letterSpacing: ".08em", textTransform: "uppercase",
+                        padding: "9px 20px", borderRadius: 9, border: "none", cursor: "pointer",
+                        color: "#f8f0e0",
+                        background: "linear-gradient(135deg, #5a6475, #3d4654)",
+                        boxShadow: "5px 5px 14px rgba(0,0,0,.35), -2px -2px 8px rgba(255,255,255,.4)",
+                        transition: "transform .15s",
+                      }}
+                      onMouseDown={e => { e.currentTarget.style.transform = "scale(0.96)"; }}
+                      onMouseUp={e   => { e.currentTarget.style.transform = "scale(1)"; }}
+                      onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; }}
+                    >↓ Download Transformed File</button>
+                  </div>
+                </div>
+
+                {/* Stats grid */}
+                {transformStats && (
+                  <div style={{
+                    display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 28,
+                  }}>
+                    {[
+                      { label: "Rules Applied",   value: transformStats.rulesApplied,   sub: `of ${transformStats.totalRules}` },
+                      { label: "Cells Changed",   value: transformStats.cellsChanged,   sub: null },
+                      { label: "Columns Changed", value: transformStats.columnsChanged, sub: null },
+                      { label: "Total Rules",     value: transformStats.totalRules,     sub: null },
+                    ].map(({ label, value, sub }) => (
+                      <div key={label} style={{
+                        padding: "18px 20px", borderRadius: 14, textAlign: "center",
+                        background: "linear-gradient(145deg, #ddd6c6, #cec5b5)",
+                        boxShadow: "inset 3px 3px 8px rgba(0,0,0,.2), inset -2px -2px 6px rgba(255,255,255,.6)",
+                      }}>
+                        <div style={{
+                          fontFamily: "'DM Mono', monospace",
+                          fontSize: 28, fontWeight: 500, color: "var(--copper)",
+                          textShadow: "0 0 12px rgba(184,115,51,.3)",
+                          lineHeight: 1, marginBottom: 6,
+                        }}>
+                          {value}
+                          {sub && <span style={{ fontSize: 13, color: "var(--warm-drk)", marginLeft: 3 }}>{sub}</span>}
+                        </div>
+                        <div style={{
+                          fontFamily: "'DM Mono', monospace",
+                          fontSize: 8, letterSpacing: ".14em", textTransform: "uppercase",
+                          color: "var(--ink-lt)",
+                        }}>{label}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {transformStats && transformStats.rulesApplied === 0 && (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 12,
+                    padding: "12px 18px", borderRadius: 10, marginBottom: 24,
+                    background: "rgba(184,115,51,.07)",
+                    border: "1px solid rgba(184,115,51,.2)",
+                  }}>
+                    <span style={{ fontSize: 16 }}>⚠</span>
+                    <div style={{
+                      fontFamily: "'DM Mono', monospace",
+                      fontSize: 10, color: "var(--ink-lt)", letterSpacing: ".04em",
+                    }}>
+                      No transformation rules matched any values in the source file.
+                      The original source file will be used for validation.
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              /* No-transform info panel */
+              <div style={{
+                padding: "22px 26px", borderRadius: 14, marginBottom: 28,
+                background: "linear-gradient(145deg, #e0d8c8, #d2cab8)",
+                boxShadow: "inset 2px 2px 6px rgba(0,0,0,.12), inset -2px -2px 5px rgba(255,255,255,.55)",
+                border: "1px dashed rgba(0,0,0,.15)",
+                display: "flex", alignItems: "flex-start", gap: 16,
+              }}>
+                <span style={{ fontSize: 22, flexShrink: 0, marginTop: 2 }}>ℹ</span>
+                <div>
+                  <div style={{
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 9, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase",
+                    color: "var(--ink)", marginBottom: 5,
+                  }}>Transformation Skipped</div>
+                  <div style={{
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 11, color: "var(--ink-lt)", lineHeight: 1.6,
+                  }}>
+                    No mapping file was uploaded. The original source file will be used for column mapping
+                    and validation. To enable value transformations, go back and upload a mapping file (.xlsx or .csv)
+                    with columns: <em>Column_Name</em>, <em>Old_Value</em>, <em>New_Value</em>.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {error && (
+              <div style={{
+                fontFamily: "'DM Mono', monospace",
+                fontSize: 12, color: "var(--active)", letterSpacing: ".04em",
+                marginBottom: 20,
+                padding: "12px 16px", borderRadius: 10,
+                background: "rgba(192,57,43,.08)",
+                border: "1px solid rgba(192,57,43,.2)",
+              }}>{error}</div>
+            )}
+
+            <div style={{
+              display: "flex", justifyContent: "space-between", marginTop: 8,
+              alignItems: "center", flexWrap: "wrap", gap: 12,
+            }}>
+              <NeuBtn onClick={() => transitionToStep(0)}>← Back</NeuBtn>
               <NeuBtn onClick={runMapping} disabled={!legacyFile || !oracleFile} accent>
                 Run Mapping →
               </NeuBtn>
             </div>
           </div>
 
-          {/* STEP 2 */}
-          <div ref={step2Ref} style={{ display: "none" }}>
-            {/* ── Title row ── */}
+          {/* ═══════════════════════════════════════
+              STEP 2 — Review Mapping (was Step 1)
+          ═══════════════════════════════════════ */}
+          <div ref={step3Ref} style={{ display: "none" }}>
+            {/* Title row */}
             <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
               <div>
                 <div style={{
@@ -1618,9 +1569,8 @@ const handleValidate = async () => {
                   fontSize: 10, color: "var(--warm-drk)", letterSpacing: ".06em",
                 }}>
                   {rows.length} columns · {rows.filter(r => r.isKey).length} key{rows.filter(r=>r.isKey).length !== 1 ? "s" : ""} selected
-                  {configData && (
-                    <span style={{ color: "#27ae60", marginLeft: 8 }}>· config loaded</span>
-                  )}
+                  {configData && <span style={{ color: "#27ae60", marginLeft: 8 }}>· config loaded</span>}
+                  {transformedFile && <span style={{ color: "var(--copper)", marginLeft: 8 }}>· using transformed source</span>}
                 </div>
               </div>
 
@@ -1647,7 +1597,7 @@ const handleValidate = async () => {
               </div>
             </div>
 
-            {/* ── Save Config bar (above table) ── */}
+            {/* Save Config bar */}
             <div style={{
               display: "flex", alignItems: "center", justifyContent: "space-between",
               marginBottom: 16,
@@ -1686,7 +1636,7 @@ const handleValidate = async () => {
                 onMouseDown={e => { if (rows.length > 0) e.currentTarget.style.transform = "scale(0.96)"; }}
                 onMouseUp={e => { e.currentTarget.style.transform = "scale(1)"; }}
                 onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; }}
-              >Save Config ↓</button>
+              >Save Config →</button>
             </div>
 
             {/* Table */}
@@ -1819,8 +1769,7 @@ const handleValidate = async () => {
                 <div style={{
                   fontFamily: "'DM Mono', monospace",
                   fontSize: 10, fontWeight: 600, letterSpacing: ".12em",
-                  textTransform: "uppercase",
-                  color: "var(--ink)",
+                  textTransform: "uppercase", color: "var(--ink)",
                 }}>Output Format</div>
                 <div style={{
                   fontFamily: "'DM Mono', monospace",
@@ -1854,7 +1803,7 @@ const handleValidate = async () => {
               display: "flex", justifyContent: "space-between", marginTop: 20,
               alignItems: "center", flexWrap: "wrap", gap: 12,
             }}>
-              <NeuBtn onClick={() => transitionToStep(0)}>← Back</NeuBtn>
+              <NeuBtn onClick={() => transitionToStep(1)}>← Back</NeuBtn>
               <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
                 <div style={{
                   fontFamily: "'DM Mono', monospace",
@@ -1865,7 +1814,7 @@ const handleValidate = async () => {
                 }}>
                   {rows.filter(r => r.validate && r.target && r.target.trim() !== "").length} of {rows.length} cols to validate · {rows.filter(r => !r.target || r.target.trim() === "").length} ignored
                 </div>
-                <NeuBtn onClick={handleValidate} accent>Validate Mapping ✓</NeuBtn>
+                <NeuBtn onClick={handleValidate} accent>Validate Mapping →</NeuBtn>
               </div>
             </div>
           </div>

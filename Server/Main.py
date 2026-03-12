@@ -56,6 +56,12 @@ except Exception:
 from openpyxl.styles import PatternFill, Border, Side, Font, Alignment
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
+try:
+    import polars as _pl_check
+    POLARS_AVAILABLE = True
+except ImportError:
+    POLARS_AVAILABLE = False
+    logger.warning("Polars not installed. Large-scale validation endpoint will be unavailable. Install with: pip install polars")
 
 
 # Load environment variables
@@ -87,7 +93,14 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Bundle-Filename", "Content-Disposition"]
+    expose_headers=[
+        "X-Bundle-Filename",
+        "Content-Disposition",
+        "X-Transform-Rules-Applied",
+        "X-Transform-Cells-Changed",
+        "X-Transform-Columns-Changed",
+        "X-Transform-Total-Rules",
+    ]
 )
 
 def _startup_env_check():
@@ -156,10 +169,6 @@ def health():
     return (
         {"status": "healthy"}
     )
-
-
-# Admin-only endpoint will be registered after the `require_roles` helper to
-# ensure dependency factories are defined before being used.
 
 
 pass_df = pd.DataFrame()
@@ -5579,6 +5588,7 @@ DATA_EXCEL_FILE_PATH = "Required_files/Hiearchy_data.xlsx"
 
 @app.post("/api/customers")
 def sync_hierarchy_with_customers(customers: List[CustomerModel]):
+    
     """
     Synchronizes customer and instance hierarchy with the main Excel file.
     For new Level-1 (customerName) and Level-2 (instanceName) pairs,
@@ -7928,16 +7938,10 @@ async def get_excel_sheets(
         )
     
 GOOGLE_API_KEY = os.environ.get('GEMINI_API_KEY', '')
-if genai is not None:
-    if GOOGLE_API_KEY:
-        try:
-            genai.configure(api_key=GOOGLE_API_KEY)
-        except Exception as e:
-            logging.warning("Failed to configure genai client: %s", e)
-    else:
-        logging.info("GEMINI_API_KEY not set; GenAI features are disabled until configured.")
-else:
+if genai is None:
     logging.info("GenAI client not installed; GenAI features are disabled.")
+elif not GOOGLE_API_KEY:
+    logging.info("GEMINI_API_KEY not set; GenAI features are disabled until configured.")
 
 def get_smart_mapping_from_gemini(legacy_cols: List[str], oracle_cols: List[str]):
     """
@@ -7955,17 +7959,14 @@ def get_smart_mapping_from_gemini(legacy_cols: List[str], oracle_cols: List[str]
         if l_col.lower() in oracle_cols_lower:
             fallback_result["mapping"][l_col] = oracle_cols_lower[l_col.lower()]
 
-    if not GOOGLE_API_KEY:
+    if not GOOGLE_API_KEY or genai is None:
         return fallback_result
 
     try:
-        model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash",
-            generation_config={"response_mime_type": "application/json"}
-        )
+        client = genai.Client(api_key=GOOGLE_API_KEY)
 
         prompt = f"""
-            You are a Data Integration Expert. 
+            You are a Data Integration Expert.
             Legacy Columns: {json.dumps(legacy_cols)}
             Oracle Columns: {json.dumps(oracle_cols)}
 
@@ -7987,26 +7988,101 @@ def get_smart_mapping_from_gemini(legacy_cols: List[str], oracle_cols: List[str]
             }}
         """
 
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=genai.types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
         text = response.text
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        
-        if match:
+        # response_mime_type is application/json so text is already JSON;
+        # fall back to regex extraction in case of extra surrounding text
+        try:
+            ai_data = json.loads(text)
+        except json.JSONDecodeError:
+            match = re.search(r'\{.*\}', text, re.DOTALL)
+            if not match:
+                return fallback_result
             ai_data = json.loads(match.group(0))
-            # Merge Fallback mapping with AI mapping (AI wins conflicts)
-            final_mapping = {**fallback_result["mapping"], **ai_data.get("mapping", {})}
-            
-            return {
-                "mapping": final_mapping,
-                "date_columns": ai_data.get("date_columns", []),
-                "timestamp_columns": ai_data.get("timestamp_columns", [])
-            }
-        else:
-            return fallback_result
+
+        # Validate AI suggestions — only keep targets that actually exist in oracle_cols.
+        # Gemini sometimes hallucinates column names; discard those entirely.
+        oracle_set       = set(oracle_cols)
+        oracle_lower_map = {c.lower(): c for c in oracle_cols}
+        validated_ai = {}
+        for src, tgt in ai_data.get("mapping", {}).items():
+            if not tgt:
+                continue  # AI said no match — let fallback decide
+            if tgt in oracle_set:
+                validated_ai[src] = tgt
+            elif tgt.lower() in oracle_lower_map:
+                validated_ai[src] = oracle_lower_map[tgt.lower()]
+            # else: hallucinated name — discard
+
+        # Merge: start with fallback exact-matches, then layer validated AI on top.
+        # AI only overrides when it found a real oracle column.
+        final_mapping = {**fallback_result["mapping"], **validated_ai}
+        return {
+            "mapping": final_mapping,
+            "date_columns": ai_data.get("date_columns", []),
+            "timestamp_columns": ai_data.get("timestamp_columns", [])
+        }
 
     except Exception as e:
         print(f"❌ Gemini Error: {e}")
         return fallback_result
+
+
+@app.post("/api/hdl/gemini-map")
+def gemini_map(payload: Dict = Body(...)):
+    """Return a smart mapping between legacy (source) and oracle (target) columns.
+
+    Expected payload shape (example):
+    {
+      "legacy_columns": [...],
+      "oracle_columns": [...],
+      "suggested_mapping": {"LegacyCol": "OracleCol"},
+      "date_columns": [ ... ]
+    }
+
+    The endpoint will call `get_smart_mapping_from_gemini` when configured, fall
+    back to exact-matches otherwise, then merge any `suggested_mapping` values
+    supplied by the caller (these take precedence).
+    """
+    try:
+        legacy_cols = payload.get("legacy_columns") or payload.get("source_columns") or []
+        oracle_cols = payload.get("oracle_columns") or payload.get("target_columns") or []
+        client_suggested = payload.get("suggested_mapping", {}) or {}
+        client_date_cols = payload.get("date_columns", []) or []
+
+        if not isinstance(legacy_cols, list) or not isinstance(oracle_cols, list):
+            raise HTTPException(status_code=400, detail="`legacy_columns` and `oracle_columns` must be lists")
+
+        ai_result = get_smart_mapping_from_gemini(legacy_cols, oracle_cols)
+
+        # Merge AI mapping with client suggestions. Client suggestions override.
+        final_mapping = dict(ai_result.get("mapping", {}))
+        for k, v in client_suggested.items():
+            if k in legacy_cols:
+                final_mapping[k] = v
+
+        # Build response in the format the frontend expects
+        response = {
+            "legacy_columns": legacy_cols,
+            "oracle_columns": oracle_cols,
+            "suggested_mapping": final_mapping,
+            "date_columns": sorted(list(set(ai_result.get("date_columns", []) + client_date_cols))),
+            "timestamp_columns": sorted(list(set(ai_result.get("timestamp_columns", []))))
+        }
+
+        return JSONResponse(content=response, status_code=200)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.exception("Error in gemini_map endpoint")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 import re
@@ -8504,8 +8580,9 @@ def _pl_clean_str_expr(col_name):
         .str.strip_chars()
         .str.replace_all(",", "")
         .str.replace_all(r"\.0+$", "")
-        .str.replace_all("^nan$", "")
-        .str.replace_all("^None$", "")
+        .str.replace_all("(?i)^nan$", "")
+        .str.replace_all("(?i)^none$", "")
+        .fill_null("")  # safety guard: ensure no nulls escape after str operations
     )
 
 
@@ -8998,7 +9075,7 @@ async def post_validation_excel(
                 ls = f"__ls_{col}"
                 os_ = f"__os_{col}"
                 mask_exprs.append(
-                    (pl.col(ls) != pl.col(os_)).alias(f"__diff_{col}")
+                    (pl.col(ls).fill_null("") != pl.col(os_).fill_null("")).alias(f"__diff_{col}")
                 )
 
         joined_diffs = joined_clean.with_columns(mask_exprs)
@@ -9363,12 +9440,6 @@ async def post_validation_excel(
 #   3. GET  /download/{job_id} → streams the result .xlsx once status == "complete"
 # =====================================================================================
 
-try:
-    import polars as _pl_check
-    POLARS_AVAILABLE = True
-except ImportError:
-    POLARS_AVAILABLE = False
-    logger.warning("Polars not installed. Large-scale validation endpoint will be unavailable. Install with: pip install polars")
 
 # ── In-memory job tracker ────────────────────────────────────────────────
 import threading as _threading
@@ -9497,6 +9568,251 @@ async def post_validation_large_scale(
     ).start()
 
     return {"job_id": job_id}
+
+# --- Data Transformation for the Source Code 
+@app.post("/api/excel/post_validation/data_mapping")
+async def post_validation_data_mapping(
+    legacyFile: UploadFile = File(...),
+    oracleFile: UploadFile = File(...),
+    mappingFile: UploadFile = File(None),
+    customerName: str = Form(...),
+    instanceName: str = Form(...),
+    legacySheet: str = Form(default=None),
+    oracleSheet: str = Form(default=None),
+):
+    """Simple synchronous mapping endpoint used by the frontend.
+    Returns column lists and a suggested mapping dict. If a mappingFile (JSON)
+    is provided the server will return it as the suggested mapping.
+    """
+    try:
+        legacy_bytes = await legacyFile.read()
+        oracle_bytes = await oracleFile.read()
+
+        # Use helper to parse into pandas DataFrame
+        try:
+            df_legacy = _read_file_bytes(legacy_bytes, legacyFile.filename)
+            df_oracle = _read_file_bytes(oracle_bytes, oracleFile.filename)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to read uploaded files: {e}")
+
+        legacy_cols = [str(c) for c in list(df_legacy.columns)]
+        oracle_cols = [str(c) for c in list(df_oracle.columns)]
+
+        suggested = {}
+        # If mappingFile provided and is Excel/CSV, try to read mapping pairs from it
+        if mappingFile is not None:
+            try:
+                mf_bytes = await mappingFile.read()
+                # Parse using existing helper which reads csv/xlsx
+                df_map = _read_file_bytes(mf_bytes, mappingFile.filename)
+                # Normalize column names
+                cols_lc = {c.lower(): c for c in df_map.columns}
+                # Common header name candidates for source and target
+                src_cands = ["source", "legacy", "from", "src", "source_column", "sourcecol"]
+                tgt_cands = ["target", "oracle", "to", "tgt", "target_column", "targetcol"]
+
+                src_col = None
+                tgt_col = None
+                for cand in src_cands:
+                    if cand in cols_lc:
+                        src_col = cols_lc[cand]
+                        break
+                for cand in tgt_cands:
+                    if cand in cols_lc:
+                        tgt_col = cols_lc[cand]
+                        break
+
+                # If headers not found, but there are at least two columns, use first two
+                if src_col is None or tgt_col is None:
+                    if len(df_map.columns) >= 2:
+                        src_col = src_col or df_map.columns[0]
+                        tgt_col = tgt_col or df_map.columns[1]
+
+                if src_col and tgt_col:
+                    for _, row in df_map[[src_col, tgt_col]].dropna(how='all').iterrows():
+                        s = str(row[src_col]).strip()
+                        t = str(row[tgt_col]).strip()
+                        if s and t:
+                            suggested[s] = t
+            except Exception:
+                # ignore parse errors and fall back to heuristic
+                suggested = {}
+
+        # If no mapping file was provided, use Gemini AI for smart column mapping
+        date_columns = []
+        if not suggested:
+            ai_result = get_smart_mapping_from_gemini(legacy_cols, oracle_cols)
+            suggested = ai_result.get("mapping", {})
+            date_columns = ai_result.get("date_columns", [])
+
+        # Ensure mapping entries only apply to the uploaded source (legacy) columns.
+        legacy_lower_map = {c.lower(): c for c in legacy_cols}
+        filtered = {}
+        for s, t in suggested.items():
+            if s in legacy_cols:
+                filtered[s] = t
+            else:
+                sl = s.lower()
+                if sl in legacy_lower_map:
+                    filtered[legacy_lower_map[sl]] = t
+                # otherwise ignore mappings that don't reference the source file
+
+        return {
+            "legacy_columns": legacy_cols,
+            "oracle_columns": oracle_cols,
+            "suggested_mapping": filtered,
+            "date_columns": date_columns,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Value-Level Transformation Endpoint
+@app.post("/api/excel/post_validation/transform")
+async def post_validation_transform(
+    sourceFile:  UploadFile = File(...),
+    mappingFile: UploadFile = File(...),
+):
+    """
+    Apply value-level transformations to sourceFile using rules defined in mappingFile.
+
+    Mapping file column detection (case-insensitive, positional fallback):
+      3+ cols → column_name | old_value | new_value  (targeted per source column)
+      2  cols → old_value   | new_value              (applied to ALL source columns)
+
+    Returns a transformed .xlsx blob.  Transform statistics are reported in
+    response headers so the frontend can display them without parsing the file.
+    """
+    try:
+        source_bytes  = await sourceFile.read()
+        mapping_bytes = await mappingFile.read()
+
+        # ── Parse source file ──────────────────────────────────────────────
+        try:
+            df = _read_file_bytes(source_bytes, sourceFile.filename)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to read source file: {e}")
+
+        # ── Parse mapping/rules file ───────────────────────────────────────
+        try:
+            df_map = _read_file_bytes(mapping_bytes, mappingFile.filename)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to read mapping file: {e}")
+
+        # ── Detect which columns represent column_name / old_value / new_value ──
+        col_name_cands  = ["column_name", "column", "col", "field", "attribute"]
+        old_value_cands = ["old_value", "from", "old", "original", "source_value"]
+        new_value_cands = ["new_value", "to", "new", "replacement", "target_value"]
+
+        cols_lc = {str(c).strip().lower(): str(c) for c in df_map.columns}
+
+        def _pick(candidates):
+            for cand in candidates:
+                if cand in cols_lc:
+                    return cols_lc[cand]
+            return None
+
+        num_map_cols  = len(df_map.columns)
+        col_name_col  = None
+        old_value_col = None
+        new_value_col = None
+        apply_all_cols = False   # True → 2-col mode, replace in every source column
+
+        if num_map_cols >= 3:
+            col_name_col  = _pick(col_name_cands)
+            old_value_col = _pick(old_value_cands)
+            new_value_col = _pick(new_value_cands)
+            # Positional fallback when headers are not recognized
+            if not col_name_col or not old_value_col or not new_value_col:
+                col_name_col  = df_map.columns[0]
+                old_value_col = df_map.columns[1]
+                new_value_col = df_map.columns[2]
+        elif num_map_cols == 2:
+            apply_all_cols = True
+            old_value_col  = df_map.columns[0]
+            new_value_col  = df_map.columns[1]
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Mapping file must have at least 2 columns (old_value, new_value)."
+            )
+
+        # ── Build rules list ───────────────────────────────────────────────
+        rules = []  # each rule: { col: str|None, old: str, new: str }
+        for _, row in df_map.dropna(subset=[old_value_col, new_value_col], how="any").iterrows():
+            old_val = str(row[old_value_col]).strip()
+            new_val = str(row[new_value_col]).strip()
+            if not old_val:
+                continue
+            if apply_all_cols:
+                target_col = None
+            else:
+                raw_col = row[col_name_col]
+                target_col = str(raw_col).strip() if pd.notna(raw_col) else None
+                if not target_col or target_col.lower() == "nan":
+                    target_col = None
+            rules.append({"col": target_col, "old": old_val, "new": new_val})
+
+        # ── Apply transformations ──────────────────────────────────────────
+        df_work      = df.copy().astype(object)   # object dtype avoids coercion errors
+        df_cols_set  = set(df_work.columns.astype(str))
+
+        rules_applied  = 0
+        cells_changed  = 0
+        cols_changed   = set()
+        total_rules    = len(rules)
+
+        for rule in rules:
+            old_val    = rule["old"]
+            new_val    = rule["new"]
+            rule_col   = rule["col"]
+            rule_hit   = False
+
+            target_cols = (
+                [rule_col] if rule_col and rule_col in df_cols_set
+                else ([] if rule_col else list(df_work.columns))
+            )
+
+            for col in target_cols:
+                series    = df_work[col].astype(str)
+                mask      = series == old_val
+                hit_count = int(mask.sum())
+                if hit_count > 0:
+                    df_work.loc[mask, col] = new_val
+                    cells_changed += hit_count
+                    cols_changed.add(str(col))
+                    rule_hit = True
+
+            if rule_hit:
+                rules_applied += 1
+
+        # ── Serialize result to xlsx bytes ─────────────────────────────────
+        out_buf = BytesIO()
+        df_work.to_excel(out_buf, index=False)
+        out_buf.seek(0)
+
+        stem         = Path(sourceFile.filename).stem if sourceFile.filename else "source"
+        out_filename = f"{stem}_transformed.xlsx"
+
+        return StreamingResponse(
+            out_buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition":          f'attachment; filename="{out_filename}"',
+                "X-Transform-Rules-Applied":    str(rules_applied),
+                "X-Transform-Cells-Changed":    str(cells_changed),
+                "X-Transform-Columns-Changed":  str(len(cols_changed)),
+                "X-Transform-Total-Rules":      str(total_rules),
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error in post_validation_transform")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/excel/post_validation/status/{job_id}")
@@ -9895,7 +10211,7 @@ def _run_validation_job(job_id: str, p: dict):
                     )
                 else:
                     ls, os_ = f"__ls_{col}", f"__os_{col}"
-                    diff_series = batch_clean[ls] != batch_clean[os_]
+                    diff_series = batch_clean[ls].fill_null("") != batch_clean[os_].fill_null("")
                 all_diff_results[col] = diff_series.sum()  # Just count, not full series
 
             del batch_clean
@@ -9941,7 +10257,7 @@ def _run_validation_job(job_id: str, p: dict):
                         _pl_clean_str_expr(l_col).alias("__cl"),
                         _pl_clean_str_expr(o_col).alias("__co"),
                     ])
-                    diff_mask = col_clean["__cl"] != col_clean["__co"]
+                    diff_mask = col_clean["__cl"].fill_null("") != col_clean["__co"].fill_null("")
 
                 filtered = col_clean.filter(diff_mask)
                 if len(filtered) > 0:
