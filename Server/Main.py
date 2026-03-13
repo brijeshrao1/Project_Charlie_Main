@@ -8255,7 +8255,7 @@ def _run_mapping_job(job_id: str, legacy_bytes: bytes, oracle_bytes: bytes,
             oracle_df = _read_file_bytes(oracle_bytes, oracle_filename)
             oracle_columns = oracle_df.columns.astype(str).str.strip().tolist()
         except Exception as e:
-            _mapping_job_update(job_id, status="failed", error=f"Failed to read Oracle file: {str(e)}")
+            _mapping_job_update(job_id, status="failed", error=f"Failed to read Target file: {str(e)}")
             return
 
         # ── Stage 3: Gemini AI Mapping ──
@@ -8604,8 +8604,8 @@ def _polars_write_source_target_csv(joined, leg_only, orc_only, cols_to_compare,
     import polars as pl
     select_exprs = []
     for col in cols_to_compare:
-        select_exprs.append(pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{col}_L"))
-        select_exprs.append(pl.col(f"{col}_O").cast(pl.Utf8).fill_null("").alias(f"{col}_O"))
+        select_exprs.append(pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{col}_S"))
+        select_exprs.append(pl.col(f"{col}_T").cast(pl.Utf8).fill_null("").alias(f"{col}_T"))
     select_exprs.append(pl.lit("MATCHED").alias("Record Status"))
     matched = joined.select(select_exprs)
     parts = [matched]
@@ -8614,22 +8614,22 @@ def _polars_write_source_target_csv(joined, leg_only, orc_only, cols_to_compare,
         l_exprs = []
         for col in cols_to_compare:
             if col in leg_only.columns:
-                l_exprs.append(pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{col}_L"))
+                l_exprs.append(pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{col}_S"))
             else:
-                l_exprs.append(pl.lit("").alias(f"{col}_L"))
-            l_exprs.append(pl.lit("").alias(f"{col}_O"))
-        l_exprs.append(pl.lit("MISSING_IN_ORACLE").alias("Record Status"))
+                l_exprs.append(pl.lit("").alias(f"{col}_S"))
+            l_exprs.append(pl.lit("").alias(f"{col}_T"))
+        l_exprs.append(pl.lit("MISSING_IN_TARGET").alias("Record Status"))
         parts.append(leg_only.select(l_exprs))
 
     if len(orc_only) > 0:
         o_exprs = []
         for col in cols_to_compare:
-            o_exprs.append(pl.lit("").alias(f"{col}_L"))
+            o_exprs.append(pl.lit("").alias(f"{col}_S"))
             if col in orc_only.columns:
-                o_exprs.append(pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{col}_O"))
+                o_exprs.append(pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{col}_T"))
             else:
-                o_exprs.append(pl.lit("").alias(f"{col}_O"))
-        o_exprs.append(pl.lit("MISSING_IN_PEOPLESOFT").alias("Record Status"))
+                o_exprs.append(pl.lit("").alias(f"{col}_T"))
+        o_exprs.append(pl.lit("MISSING_IN_SOURCE").alias("Record Status"))
         parts.append(orc_only.select(o_exprs))
 
     full = pl.concat(parts)
@@ -9039,7 +9039,7 @@ async def post_validation_excel(
         logger.info(f"Numeric columns detected: {numeric_columns}")
 
         # --- INNER JOIN on _derived_key (Polars hash join — O(n)) ---
-        joined = pl_legacy.join(pl_oracle, on=INTERNAL_KEY, suffix="_O", how="inner")
+        joined = pl_legacy.join(pl_oracle, on=INTERNAL_KEY, suffix="_T", how="inner")
         del pl_oracle; gc.collect()
         logger.info(f"Polars join complete: {len(joined):,} matched rows in {time.time() - t_compare:.2f}s")
 
@@ -9047,7 +9047,7 @@ async def post_validation_excel(
         diff_exprs = []
         for col in cols_to_compare:
             l_col = col
-            o_col = f"{col}_O"
+            o_col = f"{col}_T"
             if col in numeric_columns:
                 diff_exprs.append(_pl_clean_num_expr(l_col).alias(f"__ln_{col}"))
                 diff_exprs.append(_pl_clean_num_expr(o_col).alias(f"__on_{col}"))
@@ -9098,8 +9098,8 @@ async def post_validation_excel(
                 part = filtered.select([
                     pl.col(INTERNAL_KEY),
                     pl.lit(col_label).alias("Column Name"),
-                    pl.col(col).cast(pl.Utf8).fill_null("").alias("PeopleSoft Value"),
-                    pl.col(f"{col}_O").cast(pl.Utf8).fill_null("").alias("Oracle Cloud Value"),
+                    pl.col(col).cast(pl.Utf8).fill_null("").alias("Source Value"),
+                    pl.col(f"{col}_T").cast(pl.Utf8).fill_null("").alias("Target Value"),
                 ])
                 disc_parts.append(part)
 
@@ -9108,7 +9108,7 @@ async def post_validation_excel(
             else:
                 discrepancies_pl = pl.DataFrame({
                     INTERNAL_KEY: [], "Column Name": [],
-                    "PeopleSoft Value": [], "Oracle Cloud Value": []
+                    "Source Value": [], "Target Value": []
                 })
 
             # Add context columns (key + included) — Polars native
@@ -9123,7 +9123,7 @@ async def post_validation_excel(
             validation_df = discrepancies_pl.drop(INTERNAL_KEY).to_pandas()
 
             # Order columns
-            final_report_cols = key_cols_list + [c for c in included_cols_list if c not in key_cols_list] + ["Column Name", "PeopleSoft Value", "Oracle Cloud Value"]
+            final_report_cols = key_cols_list + [c for c in included_cols_list if c not in key_cols_list] + ["Column Name", "Source Value", "Target Value"]
             final_report_cols = [c for c in final_report_cols if c in validation_df.columns]
             validation_df = validation_df[final_report_cols]
         else:
@@ -10135,7 +10135,7 @@ def _run_validation_job(job_id: str, p: dict):
 
         logger.info(f"[{job_id[:8]}] Starting inner join on '{INTERNAL_KEY}'...")
         try:
-            joined = pl_legacy.join(pl_oracle, on=INTERNAL_KEY, suffix="_O", how="inner")
+            joined = pl_legacy.join(pl_oracle, on=INTERNAL_KEY, suffix="_T", how="inner")
         except Exception as join_err:
             logger.error(f"[{job_id[:8]}] Polars join failed: {join_err}")
             raise
@@ -10166,8 +10166,8 @@ def _run_validation_job(job_id: str, p: dict):
         num_comparison_cols = len(cols_to_compare)
         full_select = []
         for col in cols_to_compare:
-            full_select.append(pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{col}_L"))
-            full_select.append(pl.col(f"{col}_O").cast(pl.Utf8).fill_null("").alias(f"{col}_O"))
+            full_select.append(pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{col}_S"))
+            full_select.append(pl.col(f"{col}_T").cast(pl.Utf8).fill_null("").alias(f"{col}_T"))
         full_select.append(pl.lit("MATCHED").alias("Record Status"))
         joined.select(full_select).write_csv(full_data_csv_path)
         gc.collect()
@@ -10189,7 +10189,7 @@ def _run_validation_job(job_id: str, p: dict):
             diff_exprs = []
             for col in col_batch:
                 l_col = col
-                o_col = f"{col}_O"
+                o_col = f"{col}_T"
                 if col in numeric_cols:
                     diff_exprs.append(_pl_clean_num_expr(l_col).alias(f"__ln_{col}"))
                     diff_exprs.append(_pl_clean_num_expr(o_col).alias(f"__on_{col}"))
@@ -10198,7 +10198,7 @@ def _run_validation_job(job_id: str, p: dict):
                     diff_exprs.append(_pl_clean_str_expr(o_col).alias(f"__os_{col}"))
 
             batch_clean = joined.select([pl.col(INTERNAL_KEY)] + [pl.col(c) for c in col_batch]
-                                          + [pl.col(f"{c}_O") for c in col_batch]).with_columns(diff_exprs)
+                                          + [pl.col(f"{c}_T") for c in col_batch]).with_columns(diff_exprs)
 
             # Compute diff masks for this batch
             for col in col_batch:
@@ -10233,7 +10233,7 @@ def _run_validation_job(job_id: str, p: dict):
             for col_idx, col in enumerate(cols_with_diffs):
                 col_label = f"{col} - {mappings_dict.get(col, col)}"
                 l_col = col
-                o_col = f"{col}_O"
+                o_col = f"{col}_T"
 
                 # Rebuild clean + diff for just this one column (memory-safe)
                 if col in numeric_cols:
@@ -10264,8 +10264,8 @@ def _run_validation_job(job_id: str, p: dict):
                     part = filtered.select([
                         pl.col(INTERNAL_KEY),
                         pl.lit(col_label).alias("Column Name"),
-                        pl.col(l_col).cast(pl.Utf8).fill_null("").alias("PeopleSoft Value"),
-                        pl.col(o_col).cast(pl.Utf8).fill_null("").alias("Oracle Cloud Value"),
+                        pl.col(l_col).cast(pl.Utf8).fill_null("").alias("Source Value"),
+                        pl.col(o_col).cast(pl.Utf8).fill_null("").alias("Target Value"),
                     ])
                     disc_parts.append(part)
                 del col_clean, filtered
@@ -10277,7 +10277,7 @@ def _run_validation_job(job_id: str, p: dict):
             else:
                 discrepancies_pl = pl.DataFrame({
                     INTERNAL_KEY: [], "Column Name": [],
-                    "PeopleSoft Value": [], "Oracle Cloud Value": []
+                    "Source Value": [], "Target Value": []
                 })
 
             # Add context columns
@@ -10300,7 +10300,7 @@ def _run_validation_job(job_id: str, p: dict):
             gc.collect()
 
             # Order columns
-            final_report_cols = key_cols_list + [c for c in included_cols_list if c not in key_cols_list] + ["Column Name", "PeopleSoft Value", "Oracle Cloud Value"]
+            final_report_cols = key_cols_list + [c for c in included_cols_list if c not in key_cols_list] + ["Column Name", "Source Value", "Target Value"]
             final_report_cols = [c for c in final_report_cols if c in validation_df.columns]
             validation_df = validation_df[final_report_cols]
         else:
@@ -10368,30 +10368,30 @@ def _run_validation_job(job_id: str, p: dict):
         _job_update(job_id, progress=78, stage="Appending missing records to full data CSV")
 
         # CSV header order (matched data already written from Polars earlier)
-        full_csv_header_cols = [f"{c}_L" for c in cols_to_compare] + [f"{c}_O" for c in cols_to_compare] + ["Record Status"]
+        full_csv_header_cols = [f"{c}_S" for c in cols_to_compare] + [f"{c}_T" for c in cols_to_compare] + ["Record Status"]
 
-        # Append missing-in-oracle rows to CSV
+        # Append missing-in-target rows to CSV
         if count_missing_oracle > 0:
-            l_rename = {c: f"{c}_L" for c in cols_to_compare if c in legacy_only_df.columns}
+            l_rename = {c: f"{c}_S" for c in cols_to_compare if c in legacy_only_df.columns}
             ps_missing_df = legacy_only_df.rename(columns=l_rename)
             for c in cols_to_compare:
-                if f"{c}_L" not in ps_missing_df.columns:
-                    ps_missing_df[f"{c}_L"] = ""
-                ps_missing_df[f"{c}_O"] = ""
-            ps_missing_df["Record Status"] = "MISSING_IN_ORACLE"
+                if f"{c}_S" not in ps_missing_df.columns:
+                    ps_missing_df[f"{c}_S"] = ""
+                ps_missing_df[f"{c}_T"] = ""
+            ps_missing_df["Record Status"] = "MISSING_IN_TARGET"
             ps_missing_df = ps_missing_df.reindex(columns=full_csv_header_cols, fill_value="")
             ps_missing_df.to_csv(full_data_csv_path, mode='a', header=False, index=False)
             del ps_missing_df
 
-        # Append missing-in-peoplesoft rows to CSV
+        # Append missing-in-source rows to CSV
         if count_missing_ps > 0:
-            o_rename = {c: f"{c}_O" for c in cols_to_compare if c in oracle_only_df.columns}
+            o_rename = {c: f"{c}_T" for c in cols_to_compare if c in oracle_only_df.columns}
             oc_missing_csv_df = oracle_only_df.rename(columns=o_rename)
             for c in cols_to_compare:
-                oc_missing_csv_df[f"{c}_L"] = ""
-                if f"{c}_O" not in oc_missing_csv_df.columns:
-                    oc_missing_csv_df[f"{c}_O"] = ""
-            oc_missing_csv_df["Record Status"] = "MISSING_IN_PEOPLESOFT"
+                oc_missing_csv_df[f"{c}_S"] = ""
+                if f"{c}_T" not in oc_missing_csv_df.columns:
+                    oc_missing_csv_df[f"{c}_T"] = ""
+            oc_missing_csv_df["Record Status"] = "MISSING_IN_SOURCE"
             oc_missing_csv_df = oc_missing_csv_df.reindex(columns=full_csv_header_cols, fill_value="")
             oc_missing_csv_df.to_csv(full_data_csv_path, mode='a', header=False, index=False)
             del oc_missing_csv_df

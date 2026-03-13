@@ -659,8 +659,8 @@ const StepperHeader = ({ active }) => {
 ───────────────────────────────────────── */
 export default function PostValidationStepper() {
   const [activeStep,          setActiveStep]          = useState(0);
-  const [legacyFile,          setLegacyFile]          = useState(null);
-  const [oracleFile,          setOracleFile]          = useState(null);
+  const [sourceFile,          setSourceFile]          = useState(null);
+  const [targetFile,          setTargetFile]          = useState(null);
   const [configFile,          setConfigFile]          = useState(null);
   const [configData,          setConfigData]          = useState(null);
   const [mappingFile,         setMappingFile]         = useState(null);
@@ -801,7 +801,7 @@ export default function PostValidationStepper() {
 
   /* ── Run Transform — Step 0 → Step 1 ── */
   const runTransform = useCallback(async () => {
-    if (!legacyFile || !mappingFile) return;
+    if (!sourceFile || !mappingFile) return;
 
     setError("");
     setLoaderType("transform");
@@ -811,7 +811,7 @@ export default function PostValidationStepper() {
 
     try {
       const form = new FormData();
-      form.append("sourceFile",  legacyFile);
+      form.append("sourceFile",  sourceFile);
       form.append("mappingFile", mappingFile);
 
       const res = await api.post(
@@ -841,7 +841,7 @@ export default function PostValidationStepper() {
       setTransformStats({ rulesApplied, cellsChanged, columnsChanged, totalRules });
 
       /* Derive filename */
-      let fname = `${legacyFile.name.replace(/\.[^.]+$/, "")}_transformed.xlsx`;
+      let fname = `${sourceFile.name.replace(/\.[^.]+$/, "")}_transformed.xlsx`;
       const disposition = res.headers["content-disposition"];
       if (disposition && disposition.includes("filename=")) {
         fname = disposition.split("filename=")[1].replace(/"/g, "").trim();
@@ -872,11 +872,11 @@ export default function PostValidationStepper() {
       else                                   setError("Transformation request failed");
       setLoading(false);
     }
-  }, [legacyFile, mappingFile]);
+  }, [sourceFile, mappingFile]);
 
   /* ── Run Mapping — Step 1 → Step 2 ── */
   const runMapping = async () => {
-    if (!legacyFile || !oracleFile) {
+    if (!sourceFile || !targetFile) {
       setError("Please upload both files.");
       return;
     }
@@ -888,12 +888,12 @@ export default function PostValidationStepper() {
     setStage("Uploading files");
 
     /* Use the transformed file if one was produced, otherwise the original */
-    const sourceForMapping = transformedFile || legacyFile;
+    const sourceForMapping = transformedFile || sourceFile;
 
     try {
       const form = new FormData();
       form.append("legacyFile",    sourceForMapping);
-      form.append("oracleFile",    oracleFile);
+      form.append("oracleFile",    targetFile);
       form.append("legacySheet",   "");
       form.append("oracleSheet",   "");
       form.append("customerName",  configData?.customerName || "default");
@@ -925,15 +925,15 @@ export default function PostValidationStepper() {
 
       const result = submitRes.data;
 
-      const legacyCols = Array.isArray(result?.legacy_columns)  ? result.legacy_columns  : [];
-      const oracleCols = Array.isArray(result?.oracle_columns)  ? result.oracle_columns  : [];
+      const sourceCols = Array.isArray(result?.legacy_columns)  ? result.legacy_columns  : [];
+      const targetCols = Array.isArray(result?.oracle_columns)  ? result.oracle_columns  : [];
       const suggested  = result?.suggested_mapping || {};
       const dateCols   = result?.date_columns      || [];
 
-      if (!legacyCols.length || !oracleCols.length)
+      if (!sourceCols.length || !targetCols.length)
         throw new Error("Invalid API response");
 
-      setTargetOptions(oracleCols);
+      setTargetOptions(targetCols);
 
       const cfgMappings     = configData?.mappings         || {};
       const cfgKeys         = configData?.keyColumns        || [];
@@ -943,7 +943,7 @@ export default function PostValidationStepper() {
       const hasConfigOverride = Object.keys(cfgMappings).length > 0;
 
       setRows(
-        legacyCols.map((col, i) => {
+        sourceCols.map((col, i) => {
           const mappedTarget = hasConfigOverride
             ? (cfgMappings[col] != null ? cfgMappings[col] : "")
             : (suggested[col]  != null ? suggested[col]  : "");
@@ -1036,11 +1036,11 @@ export default function PostValidationStepper() {
       const dateColumns     = activeRows.filter(r => r.isDate).map(r => r.source);
 
       /* Use the transformed file if one was produced */
-      const sourceForValidation = transformedFile || legacyFile;
+      const sourceForValidation = transformedFile || sourceFile;
 
       const form = new FormData();
       form.append("legacyFile",              sourceForValidation);
-      form.append("oracleFile",              oracleFile);
+      form.append("oracleFile",              targetFile);
       form.append("customerName",            configData?.customerName || "default");
       form.append("instanceName",            configData?.instanceName || "default");
       if (configFile)  form.append("configFile",  configFile);
@@ -1271,11 +1271,11 @@ export default function PostValidationStepper() {
             <div style={{
               fontFamily: "'DM Mono', monospace",
               fontSize: 12, color: "var(--ink-lt)", letterSpacing: ".05em", marginBottom: 38,
-            }}>Provide source (legacy) and target (oracle) .xlsx or .csv files to begin</div>
+            }}>Provide source and target .xlsx or .csv files to begin</div>
 
             <div style={{ display: "flex", gap: 24, marginBottom: 28 }}>
-              <DropZone label="Source File"  file={legacyFile}  onFile={setLegacyFile}  inputRef={sourceInput} />
-              <DropZone label="Target File"  file={oracleFile}  onFile={setOracleFile}  inputRef={targetInput} />
+              <DropZone label="Source File"  file={sourceFile}  onFile={setSourceFile}  inputRef={sourceInput} />
+              <DropZone label="Target File"  file={targetFile}  onFile={setTargetFile}  inputRef={targetInput} />
               <DropZone label="Mapping File" file={mappingFile} onFile={setMappingFile} inputRef={mappingInput} />
             </div>
 
@@ -1375,7 +1375,7 @@ export default function PostValidationStepper() {
             )}
 
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <NeuBtn onClick={handleNext} disabled={!legacyFile || !oracleFile} accent>
+              <NeuBtn onClick={handleNext} disabled={!sourceFile || !targetFile} accent>
                 Next →
               </NeuBtn>
             </div>
@@ -1546,7 +1546,7 @@ export default function PostValidationStepper() {
               alignItems: "center", flexWrap: "wrap", gap: 12,
             }}>
               <NeuBtn onClick={() => transitionToStep(0)}>← Back</NeuBtn>
-              <NeuBtn onClick={runMapping} disabled={!legacyFile || !oracleFile} accent>
+              <NeuBtn onClick={runMapping} disabled={!sourceFile || !targetFile} accent>
                 Run Mapping →
               </NeuBtn>
             </div>
@@ -1637,6 +1637,98 @@ export default function PostValidationStepper() {
                 onMouseUp={e => { e.currentTarget.style.transform = "scale(1)"; }}
                 onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; }}
               >Save Config →</button>
+            </div>
+
+            {/* ── Source & Target Column Preview Panels ── */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+              {/* Source Columns Panel */}
+              <div style={{
+                borderRadius: 14,
+                background: "linear-gradient(160deg, #d6cebb, #c5bcaa)",
+                boxShadow: "inset 4px 4px 12px rgba(0,0,0,.28), inset -2px -2px 8px rgba(255,255,255,.45)",
+                border: "1px solid rgba(255,255,255,.18)",
+                overflow: "hidden",
+              }}>
+                <div style={{
+                  padding: "10px 18px",
+                  background: "linear-gradient(180deg, rgba(184,115,51,.18) 0%, rgba(184,115,51,.07) 100%)",
+                  borderBottom: "1px solid rgba(0,0,0,.1)",
+                  display: "flex", alignItems: "center", gap: 8,
+                }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--copper)", boxShadow: "0 0 6px rgba(184,115,51,.6)" }} />
+                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, fontWeight: 600, letterSpacing: ".16em", textTransform: "uppercase", color: "var(--copper)" }}>
+                    Source Columns
+                  </span>
+                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "var(--warm-drk)", marginLeft: "auto" }}>
+                    {rows.length} cols
+                  </span>
+                </div>
+                <div style={{ maxHeight: 180, overflowY: "auto", padding: "8px 0" }}>
+                  {rows.map((r, i) => (
+                    <div key={r.id} style={{
+                      padding: "5px 18px",
+                      fontFamily: "'DM Mono', monospace",
+                      fontSize: 10, color: "var(--ink)",
+                      letterSpacing: ".02em",
+                      borderBottom: i < rows.length - 1 ? "1px solid rgba(0,0,0,.04)" : "none",
+                      display: "flex", alignItems: "center", gap: 7,
+                    }}>
+                      <div style={{ width: 5, height: 5, borderRadius: "50%", flexShrink: 0, background: r.isKey ? "var(--copper)" : "rgba(0,0,0,.15)", boxShadow: r.isKey ? "0 0 5px var(--copper)" : "none" }} />
+                      {r.source}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Target Columns Panel */}
+              <div style={{
+                borderRadius: 14,
+                background: "linear-gradient(160deg, #d6cebb, #c5bcaa)",
+                boxShadow: "inset 4px 4px 12px rgba(0,0,0,.28), inset -2px -2px 8px rgba(255,255,255,.45)",
+                border: "1px solid rgba(255,255,255,.18)",
+                overflow: "hidden",
+              }}>
+                <div style={{
+                  padding: "10px 18px",
+                  background: "linear-gradient(180deg, rgba(90,100,117,.18) 0%, rgba(90,100,117,.07) 100%)",
+                  borderBottom: "1px solid rgba(0,0,0,.1)",
+                  display: "flex", alignItems: "center", gap: 8,
+                }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--steel)", boxShadow: "0 0 6px rgba(90,100,117,.6)" }} />
+                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, fontWeight: 600, letterSpacing: ".16em", textTransform: "uppercase", color: "var(--steel)" }}>
+                    Target Columns
+                  </span>
+                  <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "var(--warm-drk)", marginLeft: "auto" }}>
+                    {targetOptions.length} cols
+                  </span>
+                </div>
+                <div style={{ maxHeight: 180, overflowY: "auto", padding: "8px 0" }}>
+                  {targetOptions.map((col, i) => (
+                    <div key={col} style={{
+                      padding: "5px 18px",
+                      fontFamily: "'DM Mono', monospace",
+                      fontSize: 10, color: "var(--ink)",
+                      letterSpacing: ".02em",
+                      borderBottom: i < targetOptions.length - 1 ? "1px solid rgba(0,0,0,.04)" : "none",
+                      display: "flex", alignItems: "center", gap: 7,
+                    }}>
+                      <div style={{ width: 5, height: 5, borderRadius: "50%", flexShrink: 0, background: "var(--steel)", opacity: .5 }} />
+                      {col}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* ── Column Mapping Table ── */}
+            <div style={{
+              fontFamily: "'DM Mono', monospace",
+              fontSize: 8, fontWeight: 600, letterSpacing: ".18em", textTransform: "uppercase",
+              color: "var(--warm-drk)", marginBottom: 10, paddingLeft: 4,
+              display: "flex", alignItems: "center", gap: 8,
+            }}>
+              <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#27ae60", boxShadow: "0 0 5px rgba(39,174,96,.5)" }} />
+              Match Source → Target
             </div>
 
             {/* Table */}
