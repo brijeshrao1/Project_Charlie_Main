@@ -7,13 +7,21 @@ echo ================================
 echo   Charlie Tool Backend Setup
 echo   (Global Python Mode)
 echo ================================
+echo.
 
-pushd Server
-IF %ERRORLEVEL% NEQ 0 (
-    echo ❌ Could not find Server folder
-    pause
-    exit /b
+:: Set working directory to where this .bat file lives
+cd /d "%~dp0"
+echo Current directory: %CD%
+echo.
+
+:: Move into Server folder
+IF NOT EXIST Server (
+    echo ❌ Server folder not found in %CD%
+    goto END
 )
+cd Server
+echo Server directory: %CD%
+echo.
 
 :: Kill port 8000
 FOR /F "tokens=5" %%P IN ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') DO (
@@ -21,45 +29,46 @@ FOR /F "tokens=5" %%P IN ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') 
 )
 
 :: Check Python
-python --version || (
-    echo ❌ Python not found
-    pause
-    exit /b
+echo 🐍 Checking Python...
+python --version
+IF %ERRORLEVEL% NEQ 0 (
+    echo ❌ Python not found. Please install Python first.
+    goto END
 )
+echo.
 
 :: Install dependencies globally
-IF EXIST requirements.txt (
-    echo 📦 Installing dependencies...
-    python -m pip install -r requirements.txt --only-binary pandas 2>nul
-    IF %ERRORLEVEL% NEQ 0 (
-        echo ⚠️ Pinned pandas version failed (no wheel for this Python).
-        echo 📦 Retrying with latest compatible pandas wheel...
-        findstr /V /I "pandas" requirements.txt > requirements_no_pandas.txt
-        python -m pip install -r requirements_no_pandas.txt
-        python -m pip install pandas --only-binary :all:
-        del requirements_no_pandas.txt
-    )
-) ELSE (
+IF NOT EXIST requirements.txt (
     echo ❌ requirements.txt missing
-    pause
-    exit /b
+    goto END
 )
+
+echo 📦 Installing dependencies...
+python -m pip install -r requirements.txt --only-binary pandas
+IF %ERRORLEVEL% NEQ 0 (
+    echo.
+    echo ⚠️ Pinned pandas version failed. Trying latest compatible version...
+    findstr /V /I "pandas" requirements.txt > requirements_no_pandas.txt
+    python -m pip install -r requirements_no_pandas.txt
+    python -m pip install pandas --only-binary :all:
+    del requirements_no_pandas.txt
+)
+echo.
 
 :: Verify pandas installed
 python -c "import pandas" 2>nul
 IF %ERRORLEVEL% NEQ 0 (
-    echo ❌ pandas is still not available.
-    echo 💡 Try using Python 3.12 or 3.13 which have pre-built pandas wheels.
-    pause
-    exit /b
+    echo ❌ pandas could not be installed.
+    echo 💡 Try installing Python 3.12 or 3.13 instead of 3.14.
+    goto END
 )
 echo ✅ All dependencies installed successfully.
+echo.
 
 :: Verify Main.py
 IF NOT EXIST Main.py (
-    echo ❌ Main.py not found
-    pause
-    exit /b
+    echo ❌ Main.py not found in %CD%
+    goto END
 )
 
 :: Run FastAPI
@@ -67,10 +76,10 @@ echo 🎉 Starting server at http://127.0.0.1:8000
 echo Press CTRL+C to stop the server.
 echo ============================================
 python -m uvicorn Main:app --reload --port 8000
-
-:: If server exits or crashes, keep window open
 echo.
 echo ⚠️ Server has stopped.
-pause
-popd
-exit /b
+
+:END
+echo.
+echo Press any key to close...
+pause >nul
