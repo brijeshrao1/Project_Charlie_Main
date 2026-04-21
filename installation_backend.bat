@@ -24,12 +24,40 @@ python --version || (
 
 :: Install dependencies globally
 IF EXIST requirements.txt (
-    python -m pip install -r requirements.txt
+    echo 📦 Installing dependencies...
+    python -m pip install -r requirements.txt --only-binary pandas 2>nul
+    IF %ERRORLEVEL% NEQ 0 (
+        echo ⚠️ Pinned pandas version failed (no wheel for this Python).
+        echo 📦 Retrying with latest compatible pandas wheel...
+        python -m pip install -r requirements.txt --ignore-installed pandas --only-binary pandas 2>nul
+        IF %ERRORLEVEL% NEQ 0 (
+            echo 📦 Installing other deps first, then pandas separately...
+            findstr /V /I "pandas" requirements.txt > requirements_no_pandas.txt
+            python -m pip install -r requirements_no_pandas.txt
+            python -m pip install pandas --only-binary :all:
+            del requirements_no_pandas.txt
+            IF %ERRORLEVEL% NEQ 0 (
+                echo ❌ pandas could not be installed.
+                echo 💡 Try using Python 3.12 or 3.13 which have pre-built pandas wheels.
+                pause
+                exit /b
+            )
+        )
+    )
 ) ELSE (
     echo ❌ requirements.txt missing
     pause
     exit /b
 )
+
+:: Verify pandas installed
+python -c "import pandas" 2>nul
+IF %ERRORLEVEL% NEQ 0 (
+    echo ❌ pandas is still not available. Please install Python 3.12 or 3.13.
+    pause
+    exit /b
+)
+echo ✅ All dependencies installed successfully.
 
 :: Verify Main.py
 IF NOT EXIST Main.py (
