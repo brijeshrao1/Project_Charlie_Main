@@ -215,16 +215,16 @@ IF %PANDAS_OK% EQU 0 (
     echo.
     echo   SOLUTIONS - try in this order:
     echo.
-    echo   [1] Install Python 3.12 or 3.13 (recommended):
+    echo   [1] Recommended - Install Python 3.12 or 3.13:
     echo       https://www.python.org/downloads/
     echo       Uninstall Python 3.14+, or use the py launcher:
     echo         py -3.12 -m pip install pandas
     echo.
-    echo   [2] Install Anaconda/Miniconda (includes pandas pre-built):
+    echo   [2] Alternative - Install Anaconda or Miniconda:
     echo       https://www.anaconda.com/download
     echo       Then re-run this installer.
     echo.
-    echo   [3] Install Visual Studio Build Tools (last resort):
+    echo   [3] Last Resort  - Install VS Build Tools:
     echo       https://visualstudio.microsoft.com/visual-cpp-build-tools/
     echo       Select: "Desktop development with C++"
     echo       Then re-run this installer.
@@ -258,7 +258,7 @@ for %%M in (fastapi uvicorn pydantic pandas numpy openpyxl xlsxwriter requests h
 
 IF %WARN_COUNT% GTR 0 (
     echo.
-    echo [WARN] %WARN_COUNT% package(s) could not be imported.
+    echo [WARN] %WARN_COUNT% package^(s^) could not be imported.
     echo        Server will start but some features may be limited.
     echo        Full details: %LOG%
 ) ELSE (
