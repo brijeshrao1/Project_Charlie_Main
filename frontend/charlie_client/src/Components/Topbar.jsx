@@ -137,8 +137,12 @@ export default function Topbar() {
       }
     };
     fetchCustomers();
-    const id = setInterval(fetchCustomers, 30000); // Polling every 30s
-    return () => clearInterval(id);
+    const id = setInterval(fetchCustomers, 30000);
+    window.addEventListener("customerUpdated", fetchCustomers);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("customerUpdated", fetchCustomers);
+    };
   }, []);
 
   /* clock */

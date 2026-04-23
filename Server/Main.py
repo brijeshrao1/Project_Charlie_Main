@@ -1,4 +1,4 @@
-import pandas as pd
+﻿import pandas as pd
 from fastapi import FastAPI, HTTPException, Request, Body, Query, Form, UploadFile, File, status, BackgroundTasks, Depends
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 import tempfile
@@ -673,7 +673,6 @@ async def upload_dat_file(datFile: UploadFile = File(...)):
 
         with open(dat_path, "wb") as f:
             f.write(dat_bytes)
-
         # Ensure the response keys are consistent with the variable names
         return JSONResponse(content={
             "message": "DAT file uploaded successfully.",
@@ -7028,31 +7027,26 @@ def get_all_env_customers():
         raise HTTPException(status_code=500, detail=f"Failed to load customers: {str(e)}")
 
 
-# ✅ Merge all into .env.generated
-@app.post("/api/save-env")
 def merge_env_files(customers: List[Dict]):
     try:
-        merged_lines = []
-        added, skipped = 0, 0
+        env_path = Path(".env")
+        existing_env: dict = {}
+        if env_path.exists():
+            existing_env = dict(dotenv_values(env_path))
 
         for customer in customers:
             customer_name = customer["customerName"].strip().upper().replace(" ", "_")
             for instance in customer["instances"]:
                 inst_name = instance["instanceName"].strip().upper().replace(" ", "_")
                 prefix = f"{customer_name}_{inst_name}"
-
-                merged_lines.append(f"{prefix}_URL={instance['oracleUrl'].strip()}".strip())
-                merged_lines.append(f"{prefix}_USERNAME={instance['oracleUsername'].strip()}".strip())
-                merged_lines.append(f"{prefix}_PASSWORD={instance['oraclePassword'].strip()}".strip())
-
-                added += 1
-
-        logger.info(f"merged_lines to env are {merged_lines}")
+                existing_env[f"{prefix}_ORACLE_URL"] = instance["oracleUrl"].strip()
+                existing_env[f"{prefix}_ORACLE_USERNAME"] = instance["oracleUsername"].strip()
+                existing_env[f"{prefix}_ORACLE_PASSWORD"] = instance["oraclePassword"].strip()
 
         with open(".env", "w") as f:
-            f.write("\n".join(merged_lines))
+            f.write("\n".join(f"{k}={v}" for k, v in existing_env.items()))
 
-        return {"message": "All envs merged", "total_added": added, "total_skipped": skipped}
+        return {"message": "All envs merged", "total_added": len(customers)}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Merge failed: {str(e)}")
@@ -8571,10 +8565,10 @@ def _pl_detect_numeric_cols(df_l, df_o, cols_to_compare):
     return numeric_columns
 
 
-def _pl_clean_str_expr(col_name):
+def _pl_clean_str_expr(col_name, case_sensitive=True):
     """Polars expression: clean string for comparison."""
     import polars as pl
-    return (
+    expr = (
         pl.col(col_name).cast(pl.Utf8).fill_null("")
         .str.replace_all(r"\s+", " ")
         .str.strip_chars()
@@ -8582,8 +8576,11 @@ def _pl_clean_str_expr(col_name):
         .str.replace_all(r"\.0+$", "")
         .str.replace_all("(?i)^nan$", "")
         .str.replace_all("(?i)^none$", "")
-        .fill_null("")  # safety guard: ensure no nulls escape after str operations
+        .fill_null("")
     )
+    if not case_sensitive:
+        expr = expr.str.to_lowercase()
+    return expr
 
 
 def _pl_clean_num_expr(col_name):
@@ -8797,7 +8794,10 @@ async def post_validation_excel(
     timestampColumnstarget: str = Form(default="[]"),
     legacySheet: str = Form(default=None),
     oracleSheet: str = Form(default=None),
-    includeSourceTargetFiles: bool = Form(default=False)
+    includeSourceTargetFiles: bool = Form(default=False),
+    sourceLabel: str = Form(default="Source"),
+    targetLabel: str = Form(default="Target"),
+    caseSensitive: bool = Form(default=True)
 ):
     """
     OPTIMIZED Post-validation endpoint with FAST STYLING.
@@ -8810,6 +8810,9 @@ async def post_validation_excel(
     """
     logger.info("Starting ULTRA-OPTIMIZED validation (Polars-native pipeline)...")
     start_time = time.time()
+    src_label = (sourceLabel or "Source").strip() or "Source"
+    tgt_label = (targetLabel or "Target").strip() or "Target"
+    case_sensitive = caseSensitive
 
     temp_dir = tempfile.mkdtemp()
     main_output_path = os.path.join(temp_dir, "PostValidation_Main.xlsx")
@@ -8840,8 +8843,8 @@ async def post_validation_excel(
             is_included = source_col in included_cols_list
             
             config_rows.append({
-                "Source Column": source_col,
-                "Target Column": target_col,
+                f"{src_label} Column": source_col,
+                f"{tgt_label} Column": target_col,
                 "Is Key?": "Yes" if is_key else "No",
                 "Is Date?": "Yes" if is_date else "No",
                 "Validate": "Yes", # Implicitly Yes since it is in the mappings dict
@@ -8939,8 +8942,8 @@ async def post_validation_excel(
         # Validate columns existence
         missing = []
         for l, o in mappings_dict.items():
-            if l not in legacy_df.columns: missing.append(f"PeopleSoft column '{l}' not found in sheet '{legacy_sheet_param}'")
-            if l not in oracle_renamed.columns: missing.append(f"Oracle Cloud column '{o}' not found in sheet '{oracle_sheet_param}'")
+            if l not in legacy_df.columns: missing.append(f"{src_label} column '{l}' not found in sheet '{legacy_sheet_param}'")
+            if l not in oracle_renamed.columns: missing.append(f"{tgt_label} column '{o}' not found in sheet '{oracle_sheet_param}'")
         
         if missing:
             raise HTTPException(status_code=400, detail={"errors": missing})
@@ -9052,8 +9055,8 @@ async def post_validation_excel(
                 diff_exprs.append(_pl_clean_num_expr(l_col).alias(f"__ln_{col}"))
                 diff_exprs.append(_pl_clean_num_expr(o_col).alias(f"__on_{col}"))
             else:
-                diff_exprs.append(_pl_clean_str_expr(l_col).alias(f"__ls_{col}"))
-                diff_exprs.append(_pl_clean_str_expr(o_col).alias(f"__os_{col}"))
+                diff_exprs.append(_pl_clean_str_expr(l_col, case_sensitive).alias(f"__ls_{col}"))
+                diff_exprs.append(_pl_clean_str_expr(o_col, case_sensitive).alias(f"__os_{col}"))
 
         # Materialize all cleaned columns in ONE pass (multi-threaded)
         joined_clean = joined.with_columns(diff_exprs)
@@ -9098,8 +9101,8 @@ async def post_validation_excel(
                 part = filtered.select([
                     pl.col(INTERNAL_KEY),
                     pl.lit(col_label).alias("Column Name"),
-                    pl.col(col).cast(pl.Utf8).fill_null("").alias("Source Value"),
-                    pl.col(f"{col}_T").cast(pl.Utf8).fill_null("").alias("Target Value"),
+                    pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{src_label} Value"),
+                    pl.col(f"{col}_T").cast(pl.Utf8).fill_null("").alias(f"{tgt_label} Value"),
                 ])
                 disc_parts.append(part)
 
@@ -9108,7 +9111,7 @@ async def post_validation_excel(
             else:
                 discrepancies_pl = pl.DataFrame({
                     INTERNAL_KEY: [], "Column Name": [],
-                    "Source Value": [], "Target Value": []
+                    f"{src_label} Value": [], f"{tgt_label} Value": []
                 })
 
             # Add context columns (key + included) — Polars native
@@ -9123,7 +9126,7 @@ async def post_validation_excel(
             validation_df = discrepancies_pl.drop(INTERNAL_KEY).to_pandas()
 
             # Order columns
-            final_report_cols = key_cols_list + [c for c in included_cols_list if c not in key_cols_list] + ["Column Name", "Source Value", "Target Value"]
+            final_report_cols = key_cols_list + [c for c in included_cols_list if c not in key_cols_list] + ["Column Name", f"{src_label} Value", f"{tgt_label} Value"]
             final_report_cols = [c for c in final_report_cols if c in validation_df.columns]
             validation_df = validation_df[final_report_cols]
         else:
@@ -9202,16 +9205,16 @@ async def post_validation_excel(
 
         summary_data = [
             ["", "Comparison Statistics", "", "", "", ""],
-            ["", "PeopleSoft File Name", legacyFile.filename, "", "", ""],
-            ["", "PeopleSoft Records Count", legacy_row_count, "", "", ""],
-            ["", "Oracle Cloud File Name", oracleFile.filename, "", "", ""],
-            ["", "Oracle Cloud Records Count", oracle_row_count, "", "", ""],
+            ["", f"{src_label} File Name", legacyFile.filename, "", "", ""],
+            ["", f"{src_label} Records Count", legacy_row_count, "", "", ""],
+            ["", f"{tgt_label} File Name", oracleFile.filename, "", "", ""],
+            ["", f"{tgt_label} Records Count", oracle_row_count, "", "", ""],
             ["", "Validation DateTime", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "", "", ""],
             ["", "", "", "", "", ""],
 
             ["", "Missing Records Summary", "", "Mythics Comments", "Oracle Comments", "ParkView Comments"],
-            ["", "Records Missing in PeopleSoft", count_missing_oc, "", "", ""],
-            ["", "Records Missing in Oracle Cloud", count_missing_ps, "", "", ""],
+            ["", f"Records Missing in {src_label}", count_missing_oc, "", "", ""],
+            ["", f"Records Missing in {tgt_label}", count_missing_ps, "", "", ""],
             ["", "Total Missing Records", count_missing_ps + count_missing_oc, "", "", ""],
             ["", "", "", "", "", ""],
 
@@ -9263,15 +9266,15 @@ async def post_validation_excel(
                         max_length = max(max_length, len(str(cell.value)))
                 ws.column_dimensions[col_letter].width = min(max(max_length + 2, 12), 45)
 
-        sheet_missing_ps = "Missing in PeopleSoft"
-        sheet_missing_oc = "Missing in Oracle Cloud"
+        sheet_missing_ps = f"Missing in {src_label}"
+        sheet_missing_oc = f"Missing in {tgt_label}"
         sheet_discrepancies = "Data Discrepancies"
-        sheet_full_data = "PeopleSoft - Oracle Cloud Data"
+        sheet_full_data = f"{src_label} - {tgt_label} Data"
 
         enforce_sheet_column_limit(summary_df, "Summary")
         enforce_sheet_column_limit(validation_df, "Data Discrepancies")
-        enforce_sheet_column_limit(legacy_only_df, "Missing in Oracle Cloud")
-        enforce_sheet_column_limit(oracle_only_df, "Missing in PeopleSoft")
+        enforce_sheet_column_limit(legacy_only_df, f"Missing in {tgt_label}")
+        enforce_sheet_column_limit(oracle_only_df, f"Missing in {src_label}")
 
         # Define Styling Functions (same as before but included for completeness)
         font_white = Font(name="Calibri", size=9, color="FFFFFF", bold=True)
@@ -9497,7 +9500,10 @@ async def post_validation_large_scale(
     timestampColumnstarget: str = Form(default="[]"),
     legacySheet: str = Form(default=None),
     oracleSheet: str = Form(default=None),
-    includeSourceTargetFiles: bool = Form(default=False)
+    includeSourceTargetFiles: bool = Form(default=False),
+    sourceLabel: str = Form(default="Source"),
+    targetLabel: str = Form(default="Target"),
+    caseSensitive: bool = Form(default=True)
 ):
     """
     Accepts files & config, returns { job_id } immediately.
@@ -9556,6 +9562,9 @@ async def post_validation_large_scale(
         "legacySheet": legacySheet,
         "oracleSheet": oracleSheet,
         "includeSourceTargetFiles": includeSourceTargetFiles,
+        "sourceLabel": sourceLabel,
+        "targetLabel": targetLabel,
+        "caseSensitive": caseSensitive,
         "temp_dir": temp_dir,
     }
 
@@ -9893,6 +9902,9 @@ def _run_validation_job(job_id: str, p: dict):
     os.environ.setdefault("POLARS_VERBOSE", "1")
 
     temp_dir = p["temp_dir"]
+    src_label = (p.get("sourceLabel") or "Source").strip() or "Source"
+    tgt_label = (p.get("targetLabel") or "Target").strip() or "Target"
+    case_sensitive = p.get("caseSensitive", True)
     main_output_path = os.path.join(temp_dir, "PostValidation_Main.xlsx")
     full_data_csv_path = os.path.join(temp_dir, "PeopleSoft_OracleCloud_FullData.csv")
     discrepancies_csv_path = os.path.join(temp_dir, "DataDiscrepancies_Full.csv")
@@ -9923,8 +9935,8 @@ def _run_validation_job(job_id: str, p: dict):
         config_rows = []
         for source_col, target_col in mappings_dict.items():
             config_rows.append({
-                "Source Column": source_col,
-                "Target Column": target_col,
+                f"{src_label} Column": source_col,
+                f"{tgt_label} Column": target_col,
                 "Is Key?": "Yes" if source_col in key_cols_list else "No",
                 "Is Date?": "Yes" if (source_col in legacy_date_set or target_col in target_date_set) else "No",
                 "Validate": "Yes",
@@ -10020,9 +10032,9 @@ def _run_validation_job(job_id: str, p: dict):
         missing = []
         for l_col, o_col in mappings_dict.items():
             if l_col not in legacy_df.columns:
-                missing.append(f"PeopleSoft column '{l_col}' not found")
+                missing.append(f"{src_label} column '{l_col}' not found")
             if l_col not in oracle_renamed.columns:
-                missing.append(f"Oracle Cloud column '{o_col}' not found after rename")
+                missing.append(f"{tgt_label} column '{o_col}' not found after rename")
         if missing:
             raise ValueError(f"Column errors: {'; '.join(missing)}")
 
@@ -10194,8 +10206,8 @@ def _run_validation_job(job_id: str, p: dict):
                     diff_exprs.append(_pl_clean_num_expr(l_col).alias(f"__ln_{col}"))
                     diff_exprs.append(_pl_clean_num_expr(o_col).alias(f"__on_{col}"))
                 else:
-                    diff_exprs.append(_pl_clean_str_expr(l_col).alias(f"__ls_{col}"))
-                    diff_exprs.append(_pl_clean_str_expr(o_col).alias(f"__os_{col}"))
+                    diff_exprs.append(_pl_clean_str_expr(l_col, case_sensitive).alias(f"__ls_{col}"))
+                    diff_exprs.append(_pl_clean_str_expr(o_col, case_sensitive).alias(f"__os_{col}"))
 
             batch_clean = joined.select([pl.col(INTERNAL_KEY)] + [pl.col(c) for c in col_batch]
                                           + [pl.col(f"{c}_T") for c in col_batch]).with_columns(diff_exprs)
@@ -10254,8 +10266,8 @@ def _run_validation_job(job_id: str, p: dict):
                         pl.col(INTERNAL_KEY),
                         pl.col(l_col),
                         pl.col(o_col),
-                        _pl_clean_str_expr(l_col).alias("__cl"),
-                        _pl_clean_str_expr(o_col).alias("__co"),
+                        _pl_clean_str_expr(l_col, case_sensitive).alias("__cl"),
+                        _pl_clean_str_expr(o_col, case_sensitive).alias("__co"),
                     ])
                     diff_mask = col_clean["__cl"].fill_null("") != col_clean["__co"].fill_null("")
 
@@ -10264,8 +10276,8 @@ def _run_validation_job(job_id: str, p: dict):
                     part = filtered.select([
                         pl.col(INTERNAL_KEY),
                         pl.lit(col_label).alias("Column Name"),
-                        pl.col(l_col).cast(pl.Utf8).fill_null("").alias("Source Value"),
-                        pl.col(o_col).cast(pl.Utf8).fill_null("").alias("Target Value"),
+                        pl.col(l_col).cast(pl.Utf8).fill_null("").alias(f"{src_label} Value"),
+                        pl.col(o_col).cast(pl.Utf8).fill_null("").alias(f"{tgt_label} Value"),
                     ])
                     disc_parts.append(part)
                 del col_clean, filtered
@@ -10277,7 +10289,7 @@ def _run_validation_job(job_id: str, p: dict):
             else:
                 discrepancies_pl = pl.DataFrame({
                     INTERNAL_KEY: [], "Column Name": [],
-                    "Source Value": [], "Target Value": []
+                    f"{src_label} Value": [], f"{tgt_label} Value": []
                 })
 
             # Add context columns
@@ -10300,7 +10312,7 @@ def _run_validation_job(job_id: str, p: dict):
             gc.collect()
 
             # Order columns
-            final_report_cols = key_cols_list + [c for c in included_cols_list if c not in key_cols_list] + ["Column Name", "Source Value", "Target Value"]
+            final_report_cols = key_cols_list + [c for c in included_cols_list if c not in key_cols_list] + ["Column Name", f"{src_label} Value", f"{tgt_label} Value"]
             final_report_cols = [c for c in final_report_cols if c in validation_df.columns]
             validation_df = validation_df[final_report_cols]
         else:
@@ -10352,7 +10364,7 @@ def _run_validation_job(job_id: str, p: dict):
         count_missing_ps = len(oracle_only_df)
 
         _job_update(job_id, progress=68,
-                    stage=f"Missing: {count_missing_oracle:,} in Oracle, {count_missing_ps:,} in PeopleSoft")
+                    stage=f"Missing: {count_missing_oracle:,} in {tgt_label}, {count_missing_ps:,} in {src_label}")
 
         # CSV export for large missing sets
         if count_missing_oracle > 1_000_000:
@@ -10418,16 +10430,16 @@ def _run_validation_job(job_id: str, p: dict):
         grand_total = count_missing_oracle + count_missing_ps + total_discrepancies
         summary_data = [
             ["", "Comparison Statistics", "", "", "", ""],
-            ["", "PeopleSoft File Name", p["legacy_filename"], "", "", ""],
-            ["", "PeopleSoft Records Count", f"{legacy_count:,}", "", "", ""],
-            ["", "Oracle Cloud File Name", p["oracle_filename"], "", "", ""],
-            ["", "Oracle Cloud Records Count", f"{oracle_count:,}", "", "", ""],
+            ["", f"{src_label} File Name", p["legacy_filename"], "", "", ""],
+            ["", f"{src_label} Records Count", f"{legacy_count:,}", "", "", ""],
+            ["", f"{tgt_label} File Name", p["oracle_filename"], "", "", ""],
+            ["", f"{tgt_label} Records Count", f"{oracle_count:,}", "", "", ""],
             ["", "Validation DateTime", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "", "", ""],
             ["" , "Processing Engine", "Polars (High-Performance)", "", "", ""],
             ["", "", "", "", "", ""],
             ["", "Missing Records Summary", "", "Mythics Comments", "Oracle Comments", "ParkView Comments"],
-            ["", "Records Missing in PeopleSoft", f"{count_missing_ps:,}", "", "", ""],
-            ["", "Records Missing in Oracle Cloud", f"{count_missing_oracle:,}", "", "", ""],
+            ["", f"Records Missing in {src_label}", f"{count_missing_ps:,}", "", "", ""],
+            ["", f"Records Missing in {tgt_label}", f"{count_missing_oracle:,}", "", "", ""],
             ["", "Total Missing Records", f"{count_missing_oracle + count_missing_ps:,}", "", "", ""],
             ["", "", "", "", "", ""],
             ["", "Data Discrepancies Summary", "", "Mythics Comments", "Oracle Comments", "ParkView Comments"],
@@ -10456,8 +10468,8 @@ def _run_validation_job(job_id: str, p: dict):
         )
         align_center = Alignment(horizontal="center", vertical="center")
 
-        sheet_missing_ps = "Missing in PeopleSoft"
-        sheet_missing_oc = "Missing in Oracle Cloud"
+        sheet_missing_ps = f"Missing in {src_label}"
+        sheet_missing_oc = f"Missing in {tgt_label}"
         sheet_discrepancies = "Data Discrepancies"
 
         def _style_header(wb, sn, fill):
@@ -10519,7 +10531,7 @@ def _run_validation_job(job_id: str, p: dict):
 
         _job_update(job_id, progress=88, stage="Styling Excel sheets")
 
-        sheet_full_data = "PeopleSoft - Oracle Cloud Data"
+        sheet_full_data = f"{src_label} - {tgt_label} Data"
 
         with pd.ExcelWriter(main_output_path, engine="openpyxl") as writer:
             summary_df.to_excel(writer, index=False, header=False, sheet_name="Summary")

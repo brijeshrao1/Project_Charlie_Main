@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+﻿import React, { useState, useRef, useEffect, useCallback } from "react";
 import { gsap } from "gsap";
 /* eslint-disable no-unused-vars */
 import { Box, Card, Typography, Button, Grid, CircularProgress } from "@mui/material";
@@ -673,6 +673,9 @@ export default function PostValidationStepper() {
   const [eta,                 setEta]                 = useState(null);
   const [error,               setError]               = useState("");
   const [outputAsZip,         setOutputAsZip]         = useState(false);
+  const [sourceLabel,         setSourceLabel]         = useState("");
+  const [targetLabel,         setTargetLabel]         = useState("");
+  const [caseSensitive,       setCaseSensitive]       = useState(true);
 
   /* Transform-step state */
   const [transformedFile,     setTransformedFile]     = useState(null);    // File object returned from /transform
@@ -1057,6 +1060,9 @@ export default function PostValidationStepper() {
       form.append("oracleSheet",             "");
       form.append("includeSourceTargetFiles", !outputAsZip);
       form.append("outputAsZip",             outputAsZip);
+      form.append("sourceLabel",             sourceLabel.trim() || "Source");
+      form.append("targetLabel",             targetLabel.trim() || "Target");
+      form.append("caseSensitive",           caseSensitive);
 
       const submitRes = await api.post(
         "/excel/post_validation/validate_large",
@@ -1204,6 +1210,8 @@ export default function PostValidationStepper() {
     },
   };
   const lp = loaderProps[loaderType] || loaderProps.validation;
+  const srcLabel = sourceLabel.trim() || "Source";
+  const tgtLabel = targetLabel.trim() || "Target";
 
   return (
     <>
@@ -1277,6 +1285,52 @@ export default function PostValidationStepper() {
               <DropZone label="Source File"  file={sourceFile}  onFile={setSourceFile}  inputRef={sourceInput} />
               <DropZone label="Target File"  file={targetFile}  onFile={setTargetFile}  inputRef={targetInput} />
               <DropZone label="Mapping File" file={mappingFile} onFile={setMappingFile} inputRef={mappingInput} />
+            </div>
+
+            {/* Source / Target Label Overrides */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+              {[
+                { label: "Source Label", placeholder: "Source", value: sourceLabel, setter: setSourceLabel },
+                { label: "Target Label", placeholder: "Target", value: targetLabel, setter: setTargetLabel },
+              ].map(({ label, placeholder, value, setter }) => (
+                <div key={label} style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  <label style={{
+                    fontFamily: "'DM Mono', monospace", fontSize: 9, fontWeight: 600,
+                    letterSpacing: ".14em", textTransform: "uppercase", color: "var(--ink-lt)", paddingLeft: 2,
+                  }}>{label}</label>
+                  <div style={{ position: "relative" }}>
+                    <input
+                      type="text"
+                      value={value}
+                      onChange={e => setter(e.target.value)}
+                      placeholder={placeholder}
+                      style={{
+                        width: "100%", padding: "10px 14px",
+                        borderRadius: 10, border: "1px solid rgba(0,0,0,.08)", outline: "none",
+                        fontFamily: "'Instrument Sans', sans-serif", fontSize: 13,
+                        color: "var(--ink)",
+                        background: "linear-gradient(145deg, #ddd6c6, #c8bfad)",
+                        boxShadow: "inset 3px 3px 8px rgba(0,0,0,.22), inset -2px -2px 6px rgba(255,255,255,.6)",
+                        transition: "box-shadow .2s, border-color .2s",
+                        boxSizing: "border-box",
+                      }}
+                      onFocus={e => { e.target.style.borderColor = "var(--copper)"; e.target.style.boxShadow = "inset 3px 3px 8px rgba(0,0,0,.22), inset -2px -2px 6px rgba(255,255,255,.6), 0 0 0 2px rgba(184,115,51,.18)"; }}
+                      onBlur={e  => { e.target.style.borderColor = "rgba(0,0,0,.08)"; e.target.style.boxShadow = "inset 3px 3px 8px rgba(0,0,0,.22), inset -2px -2px 6px rgba(255,255,255,.6)"; }}
+                    />
+                    {value && (
+                      <button
+                        onClick={() => setter("")}
+                        title="Reset to default"
+                        style={{
+                          position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                          background: "none", border: "none", cursor: "pointer",
+                          color: "var(--warm-drk)", fontSize: 12, lineHeight: 1, padding: 2,
+                        }}
+                      >✕</button>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
 
             {/* Optional Config Upload */}
@@ -1657,7 +1711,7 @@ export default function PostValidationStepper() {
                 }}>
                   <div style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--copper)", boxShadow: "0 0 6px rgba(184,115,51,.6)" }} />
                   <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, fontWeight: 600, letterSpacing: ".16em", textTransform: "uppercase", color: "var(--copper)" }}>
-                    Source Columns
+                    {srcLabel} Columns
                   </span>
                   <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "var(--warm-drk)", marginLeft: "auto" }}>
                     {rows.length} cols
@@ -1696,7 +1750,7 @@ export default function PostValidationStepper() {
                 }}>
                   <div style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--steel)", boxShadow: "0 0 6px rgba(90,100,117,.6)" }} />
                   <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, fontWeight: 600, letterSpacing: ".16em", textTransform: "uppercase", color: "var(--steel)" }}>
-                    Target Columns
+                    {tgtLabel} Columns
                   </span>
                   <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: "var(--warm-drk)", marginLeft: "auto" }}>
                     {targetOptions.length} cols
@@ -1746,16 +1800,16 @@ export default function PostValidationStepper() {
                 background: "linear-gradient(180deg, rgba(0,0,0,.1) 0%, rgba(0,0,0,.05) 100%)",
                 borderBottom: "1px solid rgba(0,0,0,.1)",
               }}>
-                {["Source Column","Target Column","Key","Date","Validate","Include"].map(h => (
+                {[`${srcLabel} Column`, `${tgtLabel} Column`, "Key","Date","Validate","Include"].map((h, hi) => (
                   <div key={h} style={{
                     fontFamily: "'DM Mono', monospace",
                     fontSize: 8, fontWeight: 600, letterSpacing: ".16em",
                     textTransform: "uppercase",
                     color: "var(--warm-drk)",
-                    textAlign: (h === "Source Column" || h === "Target Column") ? "left" : "center",
+                    textAlign: hi < 2 ? "left" : "center",
                     display: "flex",
                     alignItems: "center",
-                    justifyContent: (h === "Source Column" || h === "Target Column") ? "flex-start" : "center",
+                    justifyContent: hi < 2 ? "flex-start" : "center",
                     overflow: "hidden",
                     whiteSpace: "nowrap",
                     textOverflow: "ellipsis",
@@ -1848,11 +1902,53 @@ export default function PostValidationStepper() {
               }}>{error}</div>
             )}
 
-            {/* Output format toggle */}
-            <div style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              marginTop: 24,
-              padding: "14px 20px", borderRadius: 12,
+            {/* Case Sensitivity + Output Format toggles */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 24 }}>
+
+              {/* Case Sensitivity */}
+              <div style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "14px 20px", borderRadius: 12,
+                background: "linear-gradient(145deg, #ddd6c6, #cec5b5)",
+                boxShadow: "inset 2px 2px 6px rgba(0,0,0,.18), inset -2px -2px 5px rgba(255,255,255,.55)",
+                border: "1px solid rgba(255,255,255,.2)",
+              }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <div style={{
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 10, fontWeight: 600, letterSpacing: ".12em",
+                    textTransform: "uppercase", color: "var(--ink)",
+                  }}>Case Sensitivity</div>
+                  <div style={{
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 9, color: "var(--warm-drk)", letterSpacing: ".04em",
+                  }}>
+                    {caseSensitive ? "ABC ≠ abc — exact case match" : "ABC = abc — case ignored"}
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 9, letterSpacing: ".08em", textTransform: "uppercase",
+                    color: !caseSensitive ? "var(--ink)" : "var(--warm-drk)",
+                    fontWeight: !caseSensitive ? 600 : 400,
+                    transition: "color .25s",
+                  }}>Off</span>
+                  <Toggle active={caseSensitive} onClick={() => setCaseSensitive(s => !s)} color="var(--copper)" />
+                  <span style={{
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 9, letterSpacing: ".08em", textTransform: "uppercase",
+                    color: caseSensitive ? "var(--ink)" : "var(--warm-drk)",
+                    fontWeight: caseSensitive ? 600 : 400,
+                    transition: "color .25s",
+                  }}>On</span>
+                </div>
+              </div>
+
+              {/* Output format toggle */}
+              <div style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "14px 20px", borderRadius: 12,
               background: "linear-gradient(145deg, #ddd6c6, #cec5b5)",
               boxShadow: "inset 2px 2px 6px rgba(0,0,0,.18), inset -2px -2px 5px rgba(255,255,255,.55)",
               border: "1px solid rgba(255,255,255,.2)",
@@ -1889,7 +1985,8 @@ export default function PostValidationStepper() {
                   transition: "color .25s, font-weight .25s",
                 }}>Zip Bundle</span>
               </div>
-            </div>
+              </div>
+            </div>{/* end settings grid */}
 
             <div style={{
               display: "flex", justifyContent: "space-between", marginTop: 20,

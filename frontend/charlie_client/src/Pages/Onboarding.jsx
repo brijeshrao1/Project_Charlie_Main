@@ -1,95 +1,101 @@
-import React, { useState, useEffect } from "react";
-import api from "../services/api";
+﻿import React, { useState, useEffect } from "react";
+import { useLocation } from "react-router-dom";
+import {
+  Box, Typography, TextField, Button, Card, CardContent,
+  Avatar, Chip, Stack, Divider, Alert, CircularProgress,
+  IconButton, Tooltip, Skeleton,
+} from "@mui/material";
+import EditIcon       from "@mui/icons-material/Edit";
+import StorageIcon    from "@mui/icons-material/Storage";
+import api           from "../services/api";
 
-/* ─────────────────────────────────────────
-   TOKENS & STYLES
-───────────────────────────────────────── */
-const P = {
-  warmDrk: "#a09283",
-  copper:  "#b87333",
-  ink:     "#2c2420",
-  inkLt:   "#5c4e44",
-  green:   "#27ae60",
-  danger:  "#c0392b",
-  amber:   "#c47820",
-  bg:      "#e0d8c8",
+/* ── Fonts ──────────────────────────────────────────────── */
+if (!document.getElementById("ob-fonts")) {
+  const s = document.createElement("link");
+  s.id   = "ob-fonts";
+  s.rel  = "stylesheet";
+  s.href = "https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=Instrument+Sans:wght@400;600;700&display=swap";
+  document.head.appendChild(s);
+}
+
+/* ── Design tokens ──────────────────────────────────────── */
+const C = {
+  copper:   "#b87333",
+  copperLt: "#d4935f",
+  ink:      "#2c2420",
+  inkLt:    "#5c4e44",
+  warm:     "#a09283",
+  green:    "#27ae60",
+  danger:   "#c0392b",
+  surface:  "linear-gradient(145deg, #e4dccc, #d4ccbc)",
+  bg:       "linear-gradient(160deg, #ede8dc 0%, #d8d0c0 100%)",
 };
 
-const BS = {
-  raisedSm:  "5px 5px 14px rgba(0,0,0,.25), -3px -3px 10px rgba(255,255,255,.7)",
-  pressed:   "inset 4px 4px 12px rgba(0,0,0,.35), inset -3px -3px 8px rgba(255,255,255,.5)",
-  insetDeep: "inset 5px 5px 14px rgba(0,0,0,.25), inset -4px -4px 12px rgba(255,255,255,.6)",
-  copper:    "5px 5px 14px rgba(0,0,0,.45), -2px -2px 8px rgba(255,255,255,.4), 0 0 16px rgba(184,115,51,.3)",
-};
+const NEU_RAISED  = "6px 6px 16px rgba(0,0,0,.28), -4px -4px 12px rgba(255,255,255,.82)";
+const NEU_PRESSED = "inset 4px 4px 12px rgba(0,0,0,.35), inset -3px -3px 8px rgba(255,255,255,.5)";
+const NEU_INSET   = "inset 5px 5px 12px rgba(0,0,0,.22), inset -3px -3px 8px rgba(255,255,255,.62)";
+const COPPER_GLOW = `6px 6px 16px rgba(0,0,0,.45), -2px -2px 8px rgba(255,255,255,.38), 0 0 18px rgba(184,115,51,.32)`;
 
-/* ─────────────────────────────────────────
-   REUSABLE INPUT COMPONENT
-───────────────────────────────────────── */
-const NeumorphicInput = ({ label, type = "text", value, onChange, placeholder, required, disabled }) => {
-  const [focused, setFocused] = useState(false);
+/* ── Skeuomorphic TextField override ────────────────────── */
+const neuField = (disabled) => ({
+  "& .MuiInputLabel-root": {
+    fontFamily: "'DM Mono', monospace",
+    fontSize: 10, fontWeight: 500,
+    letterSpacing: ".08em", textTransform: "uppercase",
+    color: disabled ? C.warm : C.inkLt,
+    "&.Mui-focused":  { color: C.copper },
+    "&.Mui-disabled": { color: C.warm },
+  },
+  "& .MuiOutlinedInput-root": {
+    fontFamily: "'Instrument Sans', sans-serif",
+    fontSize: 13, color: C.ink,
+    borderRadius: "12px",
+    background: disabled
+      ? "rgba(160,146,131,.08)"
+      : "linear-gradient(145deg, #ccc4b4, #d8d0be)",
+    boxShadow: disabled ? "none" : NEU_INSET,
+    transition: "box-shadow .2s ease",
+    "& fieldset":           { border: "none" },
+    "&:hover":              { boxShadow: disabled ? "none" : `${NEU_INSET}, 0 0 0 1.5px rgba(184,115,51,.28)` },
+    "&.Mui-focused":        { boxShadow: `${NEU_INSET}, 0 0 0 2px rgba(184,115,51,.42)` },
+    "& input":              { color: disabled ? C.warm : C.ink, cursor: disabled ? "not-allowed" : "text" },
+    "& input::placeholder": { color: C.warm, opacity: 1 },
+    "&.Mui-disabled":       { background: "rgba(160,146,131,.06)", boxShadow: "none" },
+  },
+});
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
-      <label style={{
-        fontFamily: "'DM Mono', monospace", fontSize: 11, fontWeight: 500,
-        color: disabled ? P.warmDrk : P.inkLt, letterSpacing: ".05em", textTransform: "uppercase", paddingLeft: 4
-      }}>
-        {label} {required && !disabled && <span style={{ color: P.danger }}>*</span>}
-      </label>
-      <input
-        type={type}
-        value={value}
-        onChange={onChange}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        placeholder={placeholder}
-        required={required && !disabled}
-        disabled={disabled}
-        style={{
-          width: "100%", padding: "12px 16px",
-          borderRadius: 12, border: "none", outline: "none",
-          background: disabled ? "rgba(160,146,131,.1)" : "linear-gradient(145deg, #c4bbb0, #cec6b8)",
-          boxShadow: disabled ? "none" : focused ? `${BS.insetDeep}, 0 0 0 2px rgba(184,115,51,.38)` : BS.insetDeep,
-          color: disabled ? P.warmDrk : P.ink, fontSize: 14, fontFamily: "'Instrument Sans', sans-serif",
-          transition: "box-shadow .2s ease",
-          cursor: disabled ? "not-allowed" : "text"
-        }}
-      />
-    </div>
-  );
-};
+/* ── Brass rivet ─────────────────────────────────────────── */
+const Rivet = ({ top, bottom, left, right }) => (
+  <Box sx={{
+    position: "absolute", top, bottom, left, right,
+    width: 14, height: 14, borderRadius: "50%",
+    background: "linear-gradient(135deg, #d4a95f, #8b6f4e, #c89b50)",
+    boxShadow: "2px 2px 5px rgba(0,0,0,.48), -1px -1px 3px rgba(255,255,255,.4), inset 0 1px 1px rgba(255,255,255,.28)",
+    zIndex: 1,
+  }}>
+    <Box sx={{ position:"absolute", top:"50%", left:"50%", width:"62%", height:1.5, bgcolor:"rgba(0,0,0,.34)", transform:"translate(-50%,-50%)" }} />
+    <Box sx={{ position:"absolute", top:"50%", left:"50%", width:"62%", height:1.5, bgcolor:"rgba(0,0,0,.34)", transform:"translate(-50%,-50%) rotate(90deg)" }} />
+  </Box>
+);
 
-/* ─────────────────────────────────────────
-   MAIN PAGE COMPONENT
-───────────────────────────────────────── */
+/* ────────────────────────────────────────────────────────── */
+
 export default function Onboarding() {
-  // --- States ---
-  const [customers, setCustomers] = useState([]);
-  const [loadingList, setLoadingList] = useState(true);
-  
+  const [customers,    setCustomers]    = useState([]);
+  const [loadingList,  setLoadingList]  = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [statusMsg, setStatusMsg] = useState({ type: "", text: "" });
-
-  // Edit Mode States
-  const [isEditing, setIsEditing] = useState(false);
-  const [editTarget, setEditTarget] = useState(null); // Stores original reference
-
-  const [formData, setFormData] = useState({
-    customerName: "",
-    instanceName: "",
-    oracleUrl: "",
-    oracleUsername: "",
-    oraclePassword: "",
+  const [statusMsg,    setStatusMsg]    = useState({ type: "", text: "" });
+  const [isEditing,    setIsEditing]    = useState(false);
+  const [editTarget,   setEditTarget]   = useState(null);
+  const [formData,     setFormData]     = useState({
+    customerName: "", instanceName: "", oracleUrl: "", oracleUsername: "", oraclePassword: "",
   });
 
-  // --- Fetch Existing Customers ---
   const fetchCustomers = async () => {
     setLoadingList(true);
     try {
-      const response = await api.get("/customers");
-      if (Array.isArray(response.data)) {
-        setCustomers(response.data);
-      }
+      const res = await api.get("/customers");
+      if (Array.isArray(res.data)) setCustomers(res.data);
     } catch (err) {
       console.error("Failed to fetch customers", err);
     } finally {
@@ -97,298 +103,272 @@ export default function Onboarding() {
     }
   };
 
-  useEffect(() => {
-    fetchCustomers();
-  }, []);
+  useEffect(() => { fetchCustomers(); }, []);
 
-  // --- Handle Edit Click ---
+  const location = useLocation();
+
+  // Pre-fill edit form when navigated from sidebar with edit state
+  useEffect(() => {
+    const state = location.state;
+    if (!state?.editMode || !state?.customerName) return;
+    window.history.replaceState({}, "");
+
+    // Normalize names to handle mismatches between hierarchy casing ("Acme Corp")
+    // and .env-key casing ("ACME_CORP") returned by GET /api/customers
+    const norm = (s) => (s || "").toUpperCase().replace(/[^A-Z0-9]/g, "_");
+
+    api.get("/customers").then((res) => {
+      if (!Array.isArray(res.data)) return;
+      const cust = res.data.find((c) => norm(c.customerName) === norm(state.customerName));
+      if (!cust) return;
+      const inst = (cust.instances || []).find((i) => norm(i.instanceName) === norm(state.instanceName));
+      if (!inst) return;
+      handleEditClick(cust, inst);
+      fetchCustomers(); // refresh directory list in parallel
+    }).catch(console.error);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleEditClick = (cust, inst) => {
     setIsEditing(true);
     setEditTarget({ customerName: cust.customerName, instanceName: inst.instanceName });
     setFormData({
-      customerName: cust.customerName,
-      instanceName: inst.instanceName,
-      oracleUrl: inst.oracleUrl || "",
-      oracleUsername: inst.oracleUsername || "",
-      oraclePassword: inst.oraclePassword || "", // May be empty depending on your backend security
+      customerName: cust.customerName, instanceName: inst.instanceName,
+      oracleUrl: inst.oracleUrl || "", oracleUsername: inst.oracleUsername || "", oraclePassword: inst.oraclePassword || "",
     });
     setStatusMsg({ type: "", text: "" });
   };
 
-  // --- Cancel Edit ---
   const handleCancelEdit = () => {
-    setIsEditing(false);
-    setEditTarget(null);
-    setFormData({
-      customerName: "", instanceName: "", oracleUrl: "",
-      oracleUsername: "", oraclePassword: "",
-    });
+    setIsEditing(false); setEditTarget(null);
+    setFormData({ customerName: "", instanceName: "", oracleUrl: "", oracleUsername: "", oraclePassword: "" });
     setStatusMsg({ type: "", text: "" });
   };
 
-// --- Handle Form Submission (POST & PUT) ---
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
     setStatusMsg({ type: "", text: "" });
-
-    // WRAP IN AN ARRAY to satisfy the API's list requirement
-    const payload = [
-      {
-        customerName: formData.customerName,
-        instances: [
-          {
-            instanceName: formData.instanceName,
-            oracleUrl: formData.oracleUrl,
-            oracleUsername: formData.oracleUsername,
-            oraclePassword: formData.oraclePassword
-          }
-        ]
-      }
-    ];
-
+    const payload = [{ customerName: formData.customerName, instances: [{ instanceName: formData.instanceName, oracleUrl: formData.oracleUrl, oracleUsername: formData.oracleUsername, oraclePassword: formData.oraclePassword }] }];
     try {
-      if (isEditing) {
-        await api.put("/customers", payload); 
-        setStatusMsg({ type: "success", text: "Instance updated successfully!" });
-      } else {
-        await api.post("/customers", payload);
-        setStatusMsg({ type: "success", text: "Customer added successfully!" });
-      }
-      
-      handleCancelEdit(); // Reset form back to creation mode
-      fetchCustomers();   // Refresh directory
-
+      await api.post("/customers", payload);
+      setStatusMsg({ type: "success", text: isEditing ? "Instance updated successfully!" : "Customer added successfully!" });
+      handleCancelEdit(); fetchCustomers();
       setTimeout(() => setStatusMsg({ type: "", text: "" }), 3000);
     } catch (err) {
       console.error(err);
       setStatusMsg({ type: "error", text: isEditing ? "Failed to update instance." : "Failed to add customer." });
-    } finally {
-      setIsSubmitting(false);
-    }
+    } finally { setIsSubmitting(false); }
   };
 
-  // --- Render ---
+  const set = (field) => (e) => setFormData((p) => ({ ...p, [field]: e.target.value }));
+
   return (
-    <div style={{
-      display: "flex", gap: 32, padding: "32px", height: "calc(100vh - 68px)",
-      background: "linear-gradient(160deg, #ede8dc 0%, #d8d0c0 100%)",
-      fontFamily: "'Instrument Sans', sans-serif",
-      boxSizing: "border-box", overflow: "hidden"
-    }}>
+    <Box sx={{ display:"flex", gap:4, p:4, height:"calc(100vh - 68px)", background: C.bg, boxSizing:"border-box", overflow:"hidden", fontFamily:"'Instrument Sans', sans-serif" }}>
 
-      {/* ── LEFT: DYNAMIC FORM ── */}
-      <div style={{
-        flex: 1, maxWidth: 500, display: "flex", flexDirection: "column",
-        background: "linear-gradient(145deg, #e4dccc, #d4ccbc)",
-        borderRadius: 20, padding: 32, boxShadow: BS.raisedSm,
-        overflowY: "auto", position: "relative"
-      }}>
-        {/* Header changes based on mode */}
-        <div style={{ marginBottom: 28 }}>
-          <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 28, color: P.ink, margin: "0 0 8px 0", lineHeight: 1.2 }}>
-            {isEditing ? "Update Configuration" : "Onboard Customer"}
-          </h1>
-          <p style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: P.warmDrk, margin: 0 }}>
-            {isEditing 
-              ? `Editing credentials for ${editTarget?.instanceName}` 
-              : "Create a new customer profile and attach their initial Oracle instance."}
-          </p>
-        </div>
+      {/* ══ LEFT PANEL — FORM ══════════════════════════════════ */}
+      <Box sx={{ flex:"0 0 460px", position:"relative", display:"flex", flexDirection:"column",
+                 background: C.surface, borderRadius:"20px",
+                 boxShadow: NEU_RAISED, overflow:"hidden" }}>
 
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", flex: 1 }}>
-          {/* Lock customer name during edit to prevent orphan records, or enable if your backend supports renaming */}
-          <NeumorphicInput
-            label="Customer / Client Name"
-            placeholder="e.g. Acme Corp"
-            value={formData.customerName}
-            onChange={(e) => setFormData({ ...formData, customerName: e.target.value })}
-            required
-            disabled={isEditing} 
-          />
+        {/* Corner rivets */}
+        <Rivet top={14} left={14} />
+        <Rivet top={14} right={14} />
+        <Rivet bottom={14} left={14} />
+        <Rivet bottom={14} right={14} />
 
-          <div style={{ height: 1, background: "rgba(160,146,131,.3)", margin: "8px 0 24px 0" }} />
+        <Box sx={{ flex:1, display:"flex", flexDirection:"column", p:"32px", overflowY:"auto" }}>
 
-          <NeumorphicInput
-            label="Instance Name"
-            placeholder="e.g. Production Environment"
-            value={formData.instanceName}
-            onChange={(e) => setFormData({ ...formData, instanceName: e.target.value })}
-            required
-            disabled={isEditing} // Typically you don't rename the instance key, just the credentials
-          />
-          <NeumorphicInput
-            label="Oracle URL"
-            placeholder="jdbc:oracle:thin:@//host:port/service"
-            value={formData.oracleUrl}
-            onChange={(e) => setFormData({ ...formData, oracleUrl: e.target.value })}
-            required
-          />
-          <div style={{ display: "flex", gap: 16 }}>
-            <div style={{ flex: 1 }}>
-              <NeumorphicInput
-                label="DB Username"
-                placeholder="system"
-                value={formData.oracleUsername}
-                onChange={(e) => setFormData({ ...formData, oracleUsername: e.target.value })}
-                required
-              />
-            </div>
-            <div style={{ flex: 1 }}>
-              <NeumorphicInput
-                label="DB Password"
-                type="password"
-                placeholder="••••••••"
-                value={formData.oraclePassword}
-                onChange={(e) => setFormData({ ...formData, oraclePassword: e.target.value })}
-                required={!isEditing} // Might not be required on PUT if keeping old password
-              />
-            </div>
-          </div>
+          {/* Header */}
+          <Box mb={3.5}>
+            <Typography sx={{ fontFamily:"'DM Serif Display', serif", fontSize:28, fontWeight:400, color: C.ink, lineHeight:1.2, mb:.75 }}>
+              {isEditing ? "Update Configuration" : "Onboard Customer"}
+            </Typography>
+            <Typography sx={{ fontFamily:"'DM Mono', monospace", fontSize:11, color: C.warm, letterSpacing:".04em" }}>
+              {isEditing
+                ? `Editing credentials for ${editTarget?.instanceName}`
+                : "Create a new customer profile and attach their Oracle instance."}
+            </Typography>
+          </Box>
 
-          <div style={{ marginTop: "auto", paddingTop: 24 }}>
-            {statusMsg.text && (
-              <div style={{
-                marginBottom: 16, padding: "12px 16px", borderRadius: 8,
-                fontFamily: "'DM Mono', monospace", fontSize: 12, textAlign: "center",
-                background: statusMsg.type === "success" ? "rgba(39,174,96,.1)" : "rgba(192,57,43,.1)",
-                color: statusMsg.type === "success" ? P.green : P.danger,
-                border: `1px solid ${statusMsg.type === "success" ? "rgba(39,174,96,.3)" : "rgba(192,57,43,.3)"}`
-              }}>
-                {statusMsg.text}
-              </div>
-            )}
+          {/* Form */}
+          <Box component="form" onSubmit={handleSubmit} sx={{ display:"flex", flexDirection:"column", flex:1, gap:2.5 }}>
 
-            <div style={{ display: "flex", gap: 12 }}>
-              {isEditing && (
-                <button
-                  type="button"
-                  onClick={handleCancelEdit}
-                  disabled={isSubmitting}
-                  style={{
-                    flex: 1, padding: "14px", borderRadius: 12,
-                    background: "linear-gradient(145deg, #e4dccc, #d4ccbc)",
-                    boxShadow: BS.raisedSm, border: "none", cursor: "pointer",
-                    fontFamily: "'Instrument Sans', sans-serif", fontSize: 15, fontWeight: 700,
-                    color: P.inkLt, transition: "all .15s ease", outline: "none"
-                  }}
-                  onMouseDown={(e) => e.currentTarget.style.boxShadow = BS.pressed}
-                  onMouseUp={(e) => e.currentTarget.style.boxShadow = BS.raisedSm}
-                >
-                  Cancel
-                </button>
+            <TextField label="Customer / Client Name" placeholder="e.g. Acme Corp"
+              value={formData.customerName} onChange={set("customerName")}
+              required disabled={isEditing} size="small" fullWidth sx={neuField(isEditing)} />
+
+            <Divider sx={{ borderColor:"rgba(160,146,131,.28)", my:.25 }} />
+
+            <TextField label="Instance Name" placeholder="e.g. Production Environment"
+              value={formData.instanceName} onChange={set("instanceName")}
+              required disabled={isEditing} size="small" fullWidth sx={neuField(isEditing)} />
+
+            <TextField label="Oracle URL" placeholder="jdbc:oracle:thin:@//host:port/service"
+              value={formData.oracleUrl} onChange={set("oracleUrl")}
+              required size="small" fullWidth sx={neuField(false)} />
+
+            <Stack direction="row" gap={2}>
+              <TextField label="DB Username" placeholder="system"
+                value={formData.oracleUsername} onChange={set("oracleUsername")}
+                required size="small" sx={{ flex:1, ...neuField(false) }} />
+              <TextField label="DB Password" type="password" placeholder="••••••••"
+                value={formData.oraclePassword} onChange={set("oraclePassword")}
+                required={!isEditing} size="small" sx={{ flex:1, ...neuField(false) }} />
+            </Stack>
+
+            {/* Actions */}
+            <Box sx={{ mt:"auto", pt:3 }}>
+              {statusMsg.text && (
+                <Box sx={{
+                  mb:2, px:2, py:1.5, borderRadius:"10px", textAlign:"center",
+                  fontFamily:"'DM Mono', monospace", fontSize:11, letterSpacing:".04em",
+                  background: statusMsg.type==="success" ? "rgba(39,174,96,.1)" : "rgba(192,57,43,.1)",
+                  color:      statusMsg.type==="success" ? C.green : C.danger,
+                  border:`1px solid ${statusMsg.type==="success" ? "rgba(39,174,96,.3)" : "rgba(192,57,43,.3)"}`,
+                }}>
+                  {statusMsg.text}
+                </Box>
               )}
-              
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                style={{
-                  flex: isEditing ? 2 : 1, padding: "14px", borderRadius: 12,
-                  background: isEditing ? "linear-gradient(135deg, #2e7d52, #1a4d32)" : "linear-gradient(135deg, #c8843a, #7a4e28)",
-                  boxShadow: isSubmitting ? BS.pressed : BS.copper,
-                  border: "none", outline: "none", cursor: isSubmitting ? "wait" : "pointer",
-                  fontFamily: "'Instrument Sans', sans-serif", fontSize: 15, fontWeight: 700,
-                  color: "#f8f0e0", letterSpacing: ".02em",
-                  transition: "all .15s ease", opacity: isSubmitting ? 0.8 : 1
-                }}
-              >
-                {isSubmitting 
-                  ? (isEditing ? "Updating..." : "Provisioning...") 
-                  : (isEditing ? "Save Changes" : "Add Customer & Instance")}
-              </button>
-            </div>
-          </div>
-        </form>
-      </div>
 
-      {/* ── RIGHT: EXISTING CUSTOMERS DIRECTORY ── */}
-      <div style={{
-        flex: 1, display: "flex", flexDirection: "column",
-        background: "transparent",
-      }}>
-        <div style={{ marginBottom: 20 }}>
-          <h2 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 24, color: P.ink, margin: "0 0 4px 0" }}>
+              <Stack direction="row" gap={1.5}>
+                {isEditing && (
+                  <Button onClick={handleCancelEdit} disabled={isSubmitting}
+                    sx={{
+                      flex:1, py:1.4, borderRadius:"12px", textTransform:"none",
+                      fontFamily:"'Instrument Sans', sans-serif", fontWeight:700, fontSize:14,
+                      color: C.inkLt, background: C.surface,
+                      boxShadow: NEU_RAISED, border:"none",
+                      "&:hover":  { boxShadow: NEU_RAISED, opacity:.9 },
+                      "&:active": { boxShadow: NEU_PRESSED },
+                    }}>
+                    Cancel
+                  </Button>
+                )}
+                <Button type="submit" disabled={isSubmitting}
+                  startIcon={isSubmitting ? <CircularProgress size={15} sx={{ color:"#f8f0e0" }} /> : null}
+                  sx={{
+                    flex: isEditing ? 2 : 1, py:1.4, borderRadius:"12px", textTransform:"none",
+                    fontFamily:"'Instrument Sans', sans-serif", fontWeight:700, fontSize:14,
+                    color:"#f8f0e0", letterSpacing:".02em",
+                    background: isEditing
+                      ? "linear-gradient(135deg, #2e7d52, #1a4d32)"
+                      : `linear-gradient(135deg, #c8843a, #7a4e28)`,
+                    boxShadow: isSubmitting ? NEU_PRESSED : COPPER_GLOW,
+                    border:"none",
+                    opacity: isSubmitting ? .82 : 1,
+                    transition:"all .15s ease",
+                    "&:hover":  { opacity:.9, filter:"brightness(1.05)" },
+                    "&:active": { boxShadow: NEU_PRESSED, transform:"scale(.98)" },
+                    "&:disabled": { background:"rgba(160,146,131,.3)", color:"rgba(255,255,255,.45)", boxShadow:"none" },
+                  }}>
+                  {isSubmitting
+                    ? (isEditing ? "Updating…" : "Provisioning…")
+                    : (isEditing ? "Save Changes" : "Add Customer & Instance")}
+                </Button>
+              </Stack>
+            </Box>
+          </Box>
+        </Box>
+      </Box>
+
+      {/* ══ RIGHT PANEL — DIRECTORY ════════════════════════════ */}
+      <Box sx={{ flex:1, display:"flex", flexDirection:"column", minWidth:0 }}>
+        <Box mb={2.5}>
+          <Typography sx={{ fontFamily:"'DM Serif Display', serif", fontSize:24, fontWeight:400, color: C.ink, mb:.25 }}>
             Active Directory
-          </h2>
-          <p style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: P.warmDrk, margin: 0 }}>
+          </Typography>
+          <Typography sx={{ fontFamily:"'DM Mono', monospace", fontSize:11, color: C.warm, letterSpacing:".04em" }}>
             Currently registered customers and instances.
-          </p>
-        </div>
+          </Typography>
+        </Box>
 
-        <div style={{
-          flex: 1, overflowY: "auto", paddingRight: 8,
-          display: "flex", flexDirection: "column", gap: 16
-        }}>
+        <Box sx={{ flex:1, overflowY:"auto", pr:1, display:"flex", flexDirection:"column", gap:2 }}>
+
           {loadingList ? (
-            <div style={{ fontFamily: "'DM Mono', monospace", color: P.inkLt, fontSize: 13 }}>Fetching directory...</div>
+            [0,1,2].map((i) => (
+              <Skeleton key={i} variant="rounded" height={88}
+                sx={{ borderRadius:"14px", bgcolor:"rgba(160,146,131,.18)", transform:"none" }} />
+            ))
           ) : customers.length === 0 ? (
-            <div style={{ fontFamily: "'DM Mono', monospace", color: P.inkLt, fontSize: 13 }}>No customers found.</div>
+            <Box sx={{ textAlign:"center", mt:10 }}>
+              <StorageIcon sx={{ fontSize:52, color: C.warm, opacity:.3, mb:1.5 }} />
+              <Typography sx={{ fontFamily:"'DM Mono', monospace", fontSize:12, color: C.warm }}>
+                No customers registered yet.
+              </Typography>
+            </Box>
           ) : (
             customers.map((cust, i) => (
-              <div key={i} style={{
-                background: "linear-gradient(145deg, #e4dccc, #d4ccbc)",
-                borderRadius: 16, padding: 20, boxShadow: BS.raisedSm,
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-                  <div style={{
-                    width: 36, height: 36, borderRadius: "50%",
-                    background: "linear-gradient(135deg, #c0b8a8, #a09080)",
-                    boxShadow: BS.insetSm, display: "flex", alignItems: "center", justifyContent: "center",
-                    fontFamily: "'DM Serif Display', serif", fontSize: 16, color: P.ink
+              <Box key={i} sx={{ background: C.surface, borderRadius:"16px", p:2.5, boxShadow: NEU_RAISED }}>
+
+                {/* Customer header */}
+                <Stack direction="row" alignItems="center" gap={1.5} mb={1.75}>
+                  <Avatar sx={{
+                    width:38, height:38, fontSize:16,
+                    fontFamily:"'DM Serif Display', serif", fontWeight:400,
+                    background:"linear-gradient(135deg, #c0b8a8, #a09080)",
+                    boxShadow:"inset 3px 3px 7px rgba(0,0,0,.3), inset -2px -2px 5px rgba(255,255,255,.45)",
+                    color: C.ink,
                   }}>
                     {cust.customerName.charAt(0).toUpperCase()}
-                  </div>
-                  <div style={{ fontFamily: "'Instrument Sans', sans-serif", fontSize: 18, fontWeight: 700, color: P.ink }}>
+                  </Avatar>
+                  <Typography sx={{ fontFamily:"'Instrument Sans', sans-serif", fontSize:17, fontWeight:700, color: C.ink }}>
                     {cust.customerName}
-                  </div>
-                </div>
-
-                {/* Nested Instances */}
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {(cust.instances || []).map((inst, j) => (
-                    <div key={j} style={{
-                      padding: "10px 14px", borderRadius: 8,
-                      background: "rgba(160,146,131,.1)", border: "1px dashed rgba(160,146,131,.3)",
-                      display: "flex", justifyContent: "space-between", alignItems: "center"
+                  </Typography>
+                  <Box sx={{ ml:"auto" }}>
+                    <Box sx={{
+                      px:1.25, py:.35, borderRadius:"6px", fontSize:9,
+                      fontFamily:"'DM Mono', monospace", fontWeight:500, letterSpacing:".06em",
+                      color: C.copper,
+                      background:"rgba(184,115,51,.1)",
+                      boxShadow:"inset 2px 2px 5px rgba(0,0,0,.1), inset -1px -1px 3px rgba(255,255,255,.4)",
                     }}>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                        <span style={{ fontFamily: "'Instrument Sans', sans-serif", fontSize: 14, fontWeight: 600, color: P.inkLt }}>
+                      {(cust.instances||[]).length} INSTANCE{(cust.instances||[]).length !== 1 ? "S" : ""}
+                    </Box>
+                  </Box>
+                </Stack>
+
+                {/* Instances */}
+                <Stack gap={1}>
+                  {(cust.instances||[]).map((inst, j) => (
+                    <Box key={j} sx={{
+                      display:"flex", alignItems:"center", justifyContent:"space-between",
+                      px:1.75, py:1, borderRadius:"8px",
+                      background:"rgba(160,146,131,.1)",
+                      border:"1px dashed rgba(160,146,131,.3)",
+                      transition:"background .15s",
+                      "&:hover": { background:"rgba(184,115,51,.07)" },
+                    }}>
+                      <Box>
+                        <Typography sx={{ fontFamily:"'Instrument Sans', sans-serif", fontSize:13, fontWeight:600, color: C.inkLt }}>
                           {inst.instanceName}
-                        </span>
-                        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: P.copper }}>
-                          {inst.oracleUsername}
-                        </span>
-                      </div>
-
-                      {/* Edit Button */}
-                      <button
-                        onClick={() => handleEditClick(cust, inst)}
-                        title="Edit Instance"
-                        style={{
-                          width: 28, height: 28, borderRadius: 6,
-                          background: "linear-gradient(145deg, #e4dccc, #d4ccbc)",
-                          boxShadow: BS.raisedSm, border: "none", cursor: "pointer",
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          transition: "all .1s ease", outline: "none"
-                        }}
-                        onMouseDown={(e) => e.currentTarget.style.boxShadow = BS.pressed}
-                        onMouseUp={(e) => e.currentTarget.style.boxShadow = BS.raisedSm}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                          <path d="M7 2.5V3.5M7 10.5V11.5M2.5 7H3.5M10.5 7H11.5M3.818 3.818L4.525 4.525M9.475 9.475L10.182 10.182M3.818 10.182L4.525 9.475M9.475 4.525L10.182 3.818" stroke={P.inkLt} strokeWidth="1.2" strokeLinecap="round"/>
-                          <path d="M5.5 8.5A2 2 0 1 1 8.5 5.5A2 2 0 0 1 5.5 8.5Z" stroke={P.inkLt} strokeWidth="1.2"/>
-                        </svg>
-                      </button>
-
-                    </div>
+                        </Typography>
+                        <Typography sx={{ fontFamily:"'DM Mono', monospace", fontSize:10, color: C.copper }}>
+                          {inst.oracleUsername || "—"}
+                        </Typography>
+                      </Box>
+                      <Tooltip title="Edit credentials" arrow>
+                        <IconButton size="small" onClick={() => handleEditClick(cust, inst)}
+                          sx={{
+                            width:28, height:28, borderRadius:"6px",
+                            background: C.surface,
+                            boxShadow: NEU_RAISED,
+                            color: C.inkLt,
+                            "&:hover":  { color: C.copper, boxShadow: NEU_RAISED },
+                            "&:active": { boxShadow: NEU_PRESSED },
+                          }}>
+                          <EditIcon sx={{ fontSize:14 }} />
+                        </IconButton>
+                      </Tooltip>
+                    </Box>
                   ))}
-                </div>
-              </div>
+                </Stack>
+
+              </Box>
             ))
           )}
-        </div>
-      </div>
-      
-    </div>
+        </Box>
+      </Box>
+
+    </Box>
   );
 }

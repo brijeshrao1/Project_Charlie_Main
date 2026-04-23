@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+﻿import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { gsap } from "gsap";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../services/api";
@@ -1440,14 +1440,14 @@ const TreeNode = React.memo(({
           ><span style={{ fontSize: 11 }}>⬇</span> DAT</div>
         )}
 
-        {/* Edit — level 3 only */}
-        {isLevel3 && (
-          <div ref={cfgRef} onClick={goConfig}
+        {/* Edit — level 3 (customer) → Onboarding */}
+        {isLevel3 && hovered && (
+          <div ref={cfgRef} onClick={(e) => { e.stopPropagation(); const inst = (node.children || []).find(c => !c.isSynthetic); navigate("/onboarding", { state: { editMode: !!inst, customerName: node.name, instanceName: inst?.name || "" } }); }}
             onMouseEnter={() => { setCfgHovered(true); if (cfgRef.current) gsap.to(cfgRef.current, { boxShadow: BS.copper, duration: .18 }); }}
             onMouseLeave={() => { setCfgHovered(false); if (cfgRef.current) gsap.to(cfgRef.current, { boxShadow: BS.raisedSm, duration: .18 }); }}
-            onMouseDown={() => { if (cfgRef.current) gsap.to(cfgRef.current, { scale: .94, boxShadow: BS.pressed, duration: .1 }); }}
+            onMouseDown={(e) => { e.stopPropagation(); if (cfgRef.current) gsap.to(cfgRef.current, { scale: .94, boxShadow: BS.pressed, duration: .1 }); }}
             onMouseUp={() => { if (cfgRef.current) gsap.to(cfgRef.current, { scale: 1, boxShadow: BS.raisedSm, duration: .2, ease: "back.out(2)" }); }}
-            role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && goConfig(e)}
+            role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); const inst = (node.children || []).find(c => !c.isSynthetic); navigate("/onboarding", { state: { editMode: !!inst, customerName: node.name, instanceName: inst?.name || "" } }); }}}
             style={{
               padding: "5px 12px", borderRadius: 6,
               fontFamily: "'DM Mono', monospace", fontSize: 10, fontWeight: 500,
@@ -1912,14 +1912,6 @@ export default function Sidebar() {
             </div>
           )}
 
-          {loadState === "error" && (
-            <div style={{
-              fontFamily: "'DM Mono', monospace", fontSize: collapsed ? 16 : 13, color: P.active,
-              padding: "13px 8px", borderRadius: 8, textAlign: collapsed ? "center" : "left",
-              background: "rgba(192,57,43,.08)", border: "1px solid rgba(192,57,43,.22)",
-            }}>{collapsed ? "!" : `⚠ ${errorMsg}`}</div>
-          )}
-
           {loadState === "ok" && displayData.map((node, idx) => (
             <TreeNode key={`0-${idx}`}
               node={node} parentPath="0" index={idx} ancestors={[]}
@@ -1934,6 +1926,74 @@ export default function Sidebar() {
             />
           ))}
         </div>
+
+        {(loadState === "error" || (loadState === "ok" && displayData.length === 0)) && (
+          collapsed ? (
+            <div title="No customers configured — click to set up"
+              onClick={() => navigate("/onboarding")}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "10px 0", cursor: "pointer" }}>
+              <div style={{
+                width: 30, height: 30, borderRadius: 8,
+                background: "linear-gradient(135deg, #c8843a, #7a4e28)",
+                boxShadow: "4px 4px 10px rgba(0,0,0,.48), -1px -1px 5px rgba(255,255,255,.32)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 14, color: "#f8f0e0",
+              }}>⚙</div>
+            </div>
+          ) : (
+            <div style={{
+              margin: "6px 4px",
+              width: "calc(100% - 8px)",
+              boxSizing: "border-box",
+              borderRadius: 12,
+              background: "linear-gradient(145deg, #e4dccc, #d4ccbc)",
+              boxShadow: "5px 5px 14px rgba(0,0,0,.22), -3px -3px 10px rgba(255,255,255,.78)",
+              overflow: "hidden",
+            }}>
+              <div style={{ height: 3, background: "linear-gradient(90deg, #c8843a, #b87333, #d4935f)" }} />
+              <div style={{ padding: "14px 12px 12px 12px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <div style={{
+                    width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+                    background: "linear-gradient(135deg, #c8843a, #7a4e28)",
+                    boxShadow: "3px 3px 8px rgba(0,0,0,.35), -1px -1px 4px rgba(255,255,255,.3)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 15, color: "#f8f0e0",
+                  }}>⚙</div>
+                  <span style={{ fontFamily: "'DM Serif Display', serif", fontSize: 15, color: P.ink, lineHeight: 1.2 }}>
+                    Setup Required
+                  </span>
+                </div>
+                <p style={{
+                  fontFamily: "'DM Mono', monospace",
+                  fontSize: 10, color: P.warm, letterSpacing: ".02em", lineHeight: 1.55,
+                  margin: "0 0 12px 0", wordBreak: "break-word",
+                }}>
+                  No customer configured. Go to Onboarding to add one.
+                </p>
+                <button
+                  onClick={() => navigate("/onboarding")}
+                  style={{
+                    width: "100%", padding: "9px 0",
+                    borderRadius: 8, border: "none", cursor: "pointer", boxSizing: "border-box",
+                    fontFamily: "'Instrument Sans', sans-serif",
+                    fontSize: 12, fontWeight: 700, letterSpacing: ".04em",
+                    color: "#f8f0e0",
+                    background: "linear-gradient(135deg, #c8843a, #7a4e28)",
+                    boxShadow: "4px 4px 12px rgba(0,0,0,.38), -2px -2px 6px rgba(255,255,255,.3), 0 0 12px rgba(184,115,51,.22)",
+                    transition: "all .15s ease",
+                  }}
+                  onMouseDown={(e) => { e.currentTarget.style.boxShadow = "inset 3px 3px 8px rgba(0,0,0,.35), inset -2px -2px 6px rgba(255,255,255,.2)"; }}
+                  onMouseUp={(e)   => { e.currentTarget.style.boxShadow = "4px 4px 12px rgba(0,0,0,.38), -2px -2px 6px rgba(255,255,255,.3), 0 0 12px rgba(184,115,51,.22)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "4px 4px 12px rgba(0,0,0,.38), -2px -2px 6px rgba(255,255,255,.3), 0 0 12px rgba(184,115,51,.22)"; }}
+                >
+                  Go to Onboarding →
+                </button>
+              </div>
+            </div>
+          )
+        )}
+
       </nav>
 
       {/* ══════════════════════════════════════
