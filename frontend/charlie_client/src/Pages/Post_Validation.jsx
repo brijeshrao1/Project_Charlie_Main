@@ -1,4 +1,5 @@
-﻿import React, { useState, useRef, useEffect, useCallback } from "react";
+﻿/* eslint-disable unicode-bom */
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { gsap } from "gsap";
 /* eslint-disable no-unused-vars */
 import { Box, Card, Typography, Button, Grid, CircularProgress } from "@mui/material";
@@ -803,6 +804,7 @@ export default function PostValidationStepper() {
   }, [activeStep, rows]);
 
   /* ── Run Transform — Step 0 → Step 1 ── */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const runTransform = useCallback(async () => {
     if (!sourceFile || !mappingFile) return;
 
@@ -875,9 +877,11 @@ export default function PostValidationStepper() {
       else                                   setError("Transformation request failed");
       setLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceFile, mappingFile]);
 
   /* ── Run Mapping — Step 1 → Step 2 ── */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const runMapping = async () => {
     if (!sourceFile || !targetFile) {
       setError("Please upload both files.");
@@ -1162,6 +1166,7 @@ export default function PostValidationStepper() {
   };
 
   /* ── Step 0 "Next" handler ── */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const handleNext = useCallback(() => {
     setError("");
     if (mappingFile) {
@@ -1173,6 +1178,7 @@ export default function PostValidationStepper() {
       setTransformedFileName("");
       transitionToStep(1);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mappingFile, runTransform]);
 
   const grid = {

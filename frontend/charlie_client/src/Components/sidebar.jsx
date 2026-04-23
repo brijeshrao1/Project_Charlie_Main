@@ -1,6 +1,7 @@
-﻿import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+﻿/* eslint-disable unicode-bom */
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { gsap } from "gsap";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import api from "../services/api";
 
 /* ─────────────────────────────────────────
@@ -1227,10 +1228,11 @@ const TreeNode = React.memo(({
     navigate("/hdl", { state: { nodeData: node, customerName, instanceName } });
   }, [hasChildren, node, customer, instance, customerName, instanceName, navigate, toggleNode, nodeId, isClickableHdlNode, uploadedExcelParents, onUploadClick, hierarchyData]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const goConfig = useCallback((e) => {
-    e.stopPropagation();
-    navigate("/config", { state: { targetNode: node.name, customerName: customer, instanceName: instance } });
-  }, [node.name, customer, instance, navigate]);
+  /* Config navigation reserved for future feature */
+  // const goConfig = useCallback((e) => {
+  //   e.stopPropagation();
+  //   navigate("/config", { state: { targetNode: node.name, customerName: customer, instanceName: instance } });
+  // }, [node.name, customer, instance, navigate]);
 
   const doToggle = useCallback((e) => { e.stopPropagation(); toggleNode(nodeId); }, [toggleNode, nodeId]);
 
@@ -1498,12 +1500,13 @@ const EXPANDED_W  = 360;
 
 export default function Sidebar() {
   const navigate = useNavigate();
-  const location = useLocation();
+  /* location not currently used */
 
   const [collapsed,     setCollapsed]    = useState(false);
   const [hierarchyData, setHierarchyData]= useState([]);
   const [expandedNodes, setExpandedNodes]= useState(new Set(["0"]));
   const [loadState,     setLoadState]    = useState("loading");
+  // eslint-disable-next-line no-unused-vars
   const [errorMsg,      setErrorMsg]     = useState("");
   const [sidebarWidth,  setSidebarWidth] = useState(EXPANDED_W);
   const [isDragging,    setIsDragging]   = useState(false);

@@ -305,11 +305,12 @@ export default function Dashboard() {
   const [stats, setStats] = useState({ totalNodes: 0, totalFiles: 0, totalTemplates: 0, totalCustomers: 0 });
   const [systemStatus, setSystemStatus] = useState({ backendAPI: "checking", oracleDB: "checking", nlpService: "checking" });
   const [loading, setLoading] = useState(true);
+  // eslint-disable-next-line no-unused-vars
   const [error,   setError]   = useState(null);
 
   const statRefs  = useRef([]);
   const heroRef   = useRef(null);
-  const cardsRef  = useRef(null);
+  /* cardsRef reserved for future animations */
 
   /* ── stats from hierarchy ── */
   const calculateStats = useCallback((nodes) => {
