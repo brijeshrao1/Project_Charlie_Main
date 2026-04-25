@@ -1,5 +1,6 @@
 flask
 gunicorn
+waitress
 pandas
 ollama
 google-generativeai
