@@ -45,3 +45,13 @@ Server/api_keys.env
 /logs/
 .env
 !.env.example
+
+# Launcher build artifacts
+/ProjectCharlie
+/ProjectCharlie.exe
+/ProjectCharlie.app
+launcher/.buildenv/
+launcher/.pyibuild/
+launcher/icon.ico
+launcher/icon.png
+launcher/ProjectCharlie.spec
