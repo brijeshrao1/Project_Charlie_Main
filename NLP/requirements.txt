@@ -1,4 +1,5 @@
 flask
+gunicorn
 pandas
 ollama
 google-generativeai

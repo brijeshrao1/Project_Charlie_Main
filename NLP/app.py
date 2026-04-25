@@ -275,6 +275,10 @@ def execute_validation_code(code_string, df):
         logger.error(f"Runtime error during validation execution: {e}\n{error_trace}", exc_info=True)
         return False, f"Runtime error during validation: {e}. Trace: {error_trace}"
 
+@app.route('/health')
+def health():
+    return jsonify({"status": "healthy"})
+
 @app.route('/')
 def index():
     """Renders the main HTML page for the application."""
