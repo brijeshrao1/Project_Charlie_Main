@@ -39,3 +39,7 @@ Server/Required_files/Venkataraman_Test_Assignment_Report.csv
 Server/api_keys.env
 /venv
 /Server/.venv
+/NLP/.venv
+/logs/
+.env
+!.env.example

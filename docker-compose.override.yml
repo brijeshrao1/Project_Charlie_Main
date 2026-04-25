@@ -1,0 +1,44 @@
+# docker-compose.override.yml  —  Development overrides
+# Applied automatically when you run `docker compose up` locally.
+# Production deployments should use `docker compose -f docker-compose.yml up`.
+
+services:
+
+  backend:
+    build:
+      context: ./Server
+    environment:
+      APP_ENV: development
+    # Live-reload the FastAPI server when source files change
+    command: >
+      python -m uvicorn Main:app
+        --host 0.0.0.0
+        --port 8000
+        --reload
+        --log-level debug
+    volumes:
+      # Mount source for hot-reload (overrides the image copy)
+      - ./Server:/app
+      - uploads:/app/uploads
+    ports:
+      - "8000:8000"
+
+  nlp:
+    environment:
+      FLASK_ENV: development
+    # Reload Flask on code changes
+    command: >
+      python -m flask run --host 0.0.0.0 --port 9000 --reload --debugger
+    volumes:
+      - ./NLP:/app
+    ports:
+      - "9000:9000"
+
+  # In development the React dev server runs outside Docker (npm start).
+  # Comment out the frontend service to avoid port conflicts.
+  frontend:
+    profiles:
+      - production-only
+
+volumes:
+  uploads:
