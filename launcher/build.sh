@@ -25,6 +25,11 @@ echo ""
 # ── 1. Create isolated build venv ────────────────────────────────────────────
 BUILDENV="$DIR/.buildenv"
 echo "[1/4] Setting up build environment…"
+
+# Clear any inherited Python environment that can cause:
+# "Could not find platform independent libraries <prefix>"
+unset PYTHONHOME PYTHONPATH
+
 python3 -m venv "$BUILDENV"
 "$BUILDENV/bin/pip" install -q --upgrade pip
 "$BUILDENV/bin/pip" install -q -r "$DIR/requirements.txt"

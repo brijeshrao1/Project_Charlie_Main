@@ -80,6 +80,19 @@ def _find_python() -> str | None:
     return None
 
 # ── Venv helpers ──────────────────────────────────────────────────────────────
+def _clean_env() -> dict:
+    """Return os.environ with Python-path vars stripped.
+
+    When running as a PyInstaller frozen binary the bootloader can leave
+    PYTHONHOME / PYTHONPATH set to internal bundle paths.  Inheriting those
+    values in child processes that use the *system* Python causes:
+      'Could not find platform independent libraries <prefix>'
+    """
+    env = os.environ.copy()
+    for key in ("PYTHONHOME", "PYTHONPATH"):
+        env.pop(key, None)
+    return env
+
 def _venv_py(service_dir: Path) -> Path:
     if IS_WINDOWS:
         return service_dir / ".venv" / "Scripts" / "python.exe"
@@ -92,17 +105,18 @@ def _setup_venv(service_dir: Path, req_file: str, sys_py: str) -> Path:
         subprocess.run(
             [sys_py, "-m", "venv", str(service_dir / ".venv")],
             check=True, cwd=service_dir,
+            env=_clean_env(),
             creationflags=_NO_CONSOLE,
         )
     log.info("Installing deps for %s …", service_dir.name)
     subprocess.run(
         [str(py), "-m", "pip", "install", "-q", "--upgrade", "pip"],
-        check=True, creationflags=_NO_CONSOLE,
+        check=True, env=_clean_env(), creationflags=_NO_CONSOLE,
     )
     subprocess.run(
         [str(py), "-m", "pip", "install", "-q", "-r",
          str(service_dir / req_file)],
-        check=True, creationflags=_NO_CONSOLE,
+        check=True, env=_clean_env(), creationflags=_NO_CONSOLE,
     )
     return py
 
