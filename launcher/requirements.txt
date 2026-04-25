@@ -1,0 +1,6 @@
+# Runtime deps bundled into the compiled exe
+pystray>=0.19.5
+Pillow>=10.0.0
+
+# Build tool (only needed when running build.sh)
+pyinstaller>=6.0

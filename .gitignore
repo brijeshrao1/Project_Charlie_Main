@@ -27,6 +27,8 @@ Server/.env
 soap_response.xml
 data.json
 *.txt
+!**/requirements.txt
+!**/Requirements.txt
 Server/Required_files/Available_NLP.xlsx
 Server/Required_files/Available_NLP.xlsx
 /Server/Required_files/precheck_reports
