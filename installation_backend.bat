@@ -1,26 +1,27 @@
-@echo off
+﻿@echo off
 setlocal ENABLEEXTENSIONS ENABLEDELAYEDEXPANSION
 color 0A
-title Charlie Tool Backend Setup
+title Charlie Tool Backend
 
 :: ======================================================================
-::  CHARLIE TOOL BACKEND INSTALLER  v3.0
-::  Handles: Python version compat, pandas build failures,
-::           SSL/proxy issues, network timeouts, conda fallback,
-::           port conflicts, missing files, import verification
+::  CHARLIE TOOL BACKEND  v4.0
+::  All packages live inside Server\.venv -- zero system-Python pollution.
+::  Fast path: healthy venv -> launch immediately (no install overhead).
+::  Handles: pandas build failures, SSL/proxy, port conflicts.
 :: ======================================================================
 
 set "ROOT=%~dp0"
 set "SERVER=%ROOT%Server"
+set "VENV=%SERVER%\.venv"
+set "PY=%VENV%\Scripts\python.exe"
 set "LOG=%ROOT%backend_install.log"
 set "PANDAS_OK=0"
 set "WARN_COUNT=0"
 set "EXIT_CODE=0"
 
-:: ---- Init log file ----
 echo. > "%LOG%"
 echo ================================================ >> "%LOG%"
-echo  Charlie Backend Installer  [%DATE% %TIME%] >> "%LOG%"
+echo  Charlie Backend v4.0  [%DATE% %TIME%] >> "%LOG%"
 echo ================================================ >> "%LOG%"
 
 echo.
@@ -29,10 +30,10 @@ echo   Charlie Tool Backend  -  Production Setup
 echo ================================================
 echo.
 
-:: ---- Navigate to Server folder ----
+:: ---- Navigate to Server folder -----------------------------------------------
 IF NOT EXIST "%SERVER%" (
-    echo [FAIL] Server folder not found at: %SERVER%
-    echo [FAIL] Server folder not found >> "%LOG%"
+    echo [FAIL] Server folder not found: %SERVER%
+    echo [FAIL] Server folder missing >> "%LOG%"
     goto :ABORT
 )
 cd /d "%SERVER%"
@@ -40,94 +41,122 @@ echo [INFO] Working directory: %CD%
 echo [INFO] Working directory: %CD% >> "%LOG%"
 echo.
 
-:: ---- Release port 8000 (two passes for stubborn processes) ----
+:: ---- Release port 8000 (two passes) ------------------------------------------
 echo [INIT] Clearing port 8000...
 FOR /F "tokens=5" %%P IN ('netstat -aon 2^>nul ^| findstr /L ":8000 " ^| findstr "LISTENING"') DO (
-    taskkill /F /PID %%P >nul 2>&1
+    taskkill /F /T /PID %%P >nul 2>&1
 )
 FOR /F "tokens=5" %%P IN ('netstat -aon 2^>nul ^| findstr /L ":8000 " ^| findstr "LISTENING"') DO (
     taskkill /F /T /PID %%P >nul 2>&1
 )
 echo.
 
-:: ======================================================================
-::  STEP 1/6 - PYTHON DETECTION
-:: ======================================================================
-echo [1/6] Checking Python...
-python --version >nul 2>&1
-IF %ERRORLEVEL% NEQ 0 (
-    echo [FAIL] Python not found in PATH.
-    echo [FAIL] Python not found >> "%LOG%"
-    echo.
-    echo   Install Python 3.12 or 3.13 from:
-    echo   https://www.python.org/downloads/
-    echo   Check "Add python.exe to PATH" during installation.
-    echo.
+:: ==============================================================================
+::  FAST PATH: venv is healthy -> skip all setup and go straight to launch
+:: ==============================================================================
+IF EXIST "%PY%" (
+    "%PY%" -c "import fastapi, uvicorn, pydantic, pydantic_core, pandas" >nul 2>&1
+    IF !ERRORLEVEL! EQU 0 (
+        echo [OK]   venv is healthy -- skipping setup
+        echo [FAST] venv healthy -- skipping setup >> "%LOG%"
+        goto :LAUNCH
+    )
+    echo [INFO] venv exists but needs repair -- reinstalling packages...
+    echo [INFO] venv repair needed >> "%LOG%"
+)
+
+:: ==============================================================================
+::  STEP 1/5 -- DETECT SYSTEM PYTHON  (used only to create the venv)
+:: ==============================================================================
+echo [1/5] Locating Python 3...
+set "SYS_PY="
+
+for %%E in (py python python3) do (
+    if not defined SYS_PY (
+        where %%E >nul 2>&1
+        if !ERRORLEVEL! EQU 0 (
+            for /F "tokens=*" %%V in ('%%E --version 2^>^&1') do (
+                echo %%V | findstr /C:"Python 3" >nul
+                if !ERRORLEVEL! EQU 0 set "SYS_PY=%%E"
+            )
+        )
+    )
+)
+
+IF NOT DEFINED SYS_PY (
+    echo [FAIL] Python 3 not found in PATH.
+    echo        Install Python 3.10-3.13 from https://www.python.org/downloads/
+    echo        Enable "Add python.exe to PATH" during setup.
+    echo [FAIL] Python 3 not found >> "%LOG%"
     goto :ABORT
 )
-FOR /F "tokens=*" %%V IN ('python --version 2^>^&1') DO (
-    echo [OK]   %%V found
+
+FOR /F "tokens=*" %%V IN ('%SYS_PY% --version 2^>^&1') DO (
+    echo [OK]   %%V  ^(used only to create .venv^)
     echo [OK]   %%V >> "%LOG%"
 )
-
-:: Ideal range: 3.10-3.13. Warn outside this range but continue.
-python -c "import sys; v=sys.version_info; exit(0 if v.major==3 and 10<=v.minor<=13 else 1)" >nul 2>&1
-IF %ERRORLEVEL% NEQ 0 (
-    python -c "import sys; v=sys.version_info; exit(0 if v.major==3 and v.minor>=14 else 1)" >nul 2>&1
-    IF !ERRORLEVEL! EQU 0 (
-        echo [WARN] Python 3.14+ detected - pandas binary wheels may not yet be available.
-        echo [WARN] Python 3.14+ detected >> "%LOG%"
-        echo        Will try 5 fallback strategies. If all fail:
-        echo        install Python 3.12 or 3.13 and re-run this installer.
-    ) ELSE (
-        echo [WARN] Python below 3.10 detected - some packages may fail to install.
-        echo [WARN] Python below 3.10 >> "%LOG%"
-    )
-    echo.
-)
 echo.
 
-:: ======================================================================
-::  STEP 2/6 - UPGRADE PIP
-:: ======================================================================
-echo [2/6] Upgrading pip...
-python -m pip install --upgrade pip --quiet --no-warn-script-location 2>>"%LOG%"
+:: ==============================================================================
+::  STEP 2/5 -- CREATE ISOLATED VENV
+:: ==============================================================================
+echo [2/5] Preparing isolated environment...
+IF NOT EXIST "%VENV%" (
+    echo        Creating .venv ...
+    %SYS_PY% -m venv "%VENV%" 2>>"%LOG%"
+    IF !ERRORLEVEL! NEQ 0 (
+        echo [FAIL] venv creation failed -- check %LOG%
+        echo [FAIL] venv creation failed >> "%LOG%"
+        goto :ABORT
+    )
+    echo [OK]   .venv created.
+) ELSE (
+    echo [OK]   .venv already exists.
+)
+echo [INFO] Venv Python: %PY% >> "%LOG%"
+echo.
+
+:: ==============================================================================
+::  STEP 3/5 -- UPGRADE PIP  (inside venv only)
+:: ==============================================================================
+echo [3/5] Upgrading pip...
+"%PY%" -m pip install --upgrade pip --quiet --no-warn-script-location 2>>"%LOG%"
 IF %ERRORLEVEL% NEQ 0 (
-    echo [WARN] pip upgrade failed - continuing with installed pip version.
+    echo [WARN] pip upgrade failed -- continuing with installed version.
     echo [WARN] pip upgrade failed >> "%LOG%"
 ) ELSE (
-    FOR /F "tokens=*" %%V IN ('python -m pip --version 2^>^&1') DO echo [OK]   %%V
+    FOR /F "tokens=*" %%V IN ('"%PY%" -m pip --version 2^>^&1') DO echo [OK]   %%V
 )
 echo.
 
-:: ======================================================================
-::  STEP 3/6 - BASE DEPENDENCIES (everything except pandas)
-:: ======================================================================
-echo [3/6] Installing base dependencies...
+:: ==============================================================================
+::  STEP 4/5 -- INSTALL DEPENDENCIES  (inside venv)
+:: ==============================================================================
+echo [4/5] Installing dependencies...
 
-python -c "lines=[l for l in open('Requirements.txt') if not l.strip().lower().startswith('pandas')]; open('_req_base.txt','w').writelines(lines)" 2>>"%LOG%"
+"%PY%" -c "lines=[l for l in open('Requirements.txt') if not l.strip().lower().startswith('pandas')]; open('_req_base.txt','w').writelines(lines)" 2>>"%LOG%"
 IF %ERRORLEVEL% NEQ 0 (
-    echo [FAIL] Could not read Requirements.txt
+    echo [FAIL] Cannot read Requirements.txt
     echo [FAIL] Requirements.txt unreadable >> "%LOG%"
     goto :ABORT
 )
 
-:: Attempt A: binary-only (fastest, no compiler)
+:: Attempt A: binary wheels only (fastest -- no compiler required)
 echo        [A] Binary-only install...
-python -m pip install -r _req_base.txt --only-binary=:all: --retries 3 --timeout 90 -q 2>>"%LOG%"
+"%PY%" -m pip install -r _req_base.txt --only-binary=:all: --upgrade --retries 3 --timeout 90 -q 2>>"%LOG%"
 set "BASE_OK=%ERRORLEVEL%"
 
-:: Attempt B: allow source builds (some packages may compile)
+:: Attempt B: allow source builds
 IF %BASE_OK% NEQ 0 (
     echo        [B] Allowing source builds...
-    python -m pip install -r _req_base.txt --retries 3 --timeout 90 -q 2>>"%LOG%"
+    "%PY%" -m pip install -r _req_base.txt --upgrade --retries 3 --timeout 90 -q 2>>"%LOG%"
     set "BASE_OK=!ERRORLEVEL!"
 )
 
 :: Attempt C: SSL bypass for corporate proxies
 IF %BASE_OK% NEQ 0 (
     echo        [C] SSL-bypass mode...
-    python -m pip install -r _req_base.txt --retries 3 --timeout 90 -q ^
+    "%PY%" -m pip install -r _req_base.txt --upgrade --retries 3 --timeout 90 -q ^
         --trusted-host pypi.org --trusted-host files.pythonhosted.org ^
         --trusted-host pypi.python.org 2>>"%LOG%"
     set "BASE_OK=!ERRORLEVEL!"
@@ -136,121 +165,87 @@ IF %BASE_OK% NEQ 0 (
 del "_req_base.txt" >nul 2>&1
 
 IF %BASE_OK% NEQ 0 (
-    echo [FAIL] Could not install base dependencies after 3 attempts.
+    echo [FAIL] Base dependencies failed after 3 attempts.
     echo [FAIL] Base dependency install failed >> "%LOG%"
-    echo.
     echo   Check %LOG% for details.
-    echo   Verify internet connectivity and try again.
     goto :ABORT
 )
-echo [OK]   Base dependencies installed.
-echo.
+echo [OK]   Base packages installed.
 
-:: ======================================================================
-::  STEP 4/6 - PANDAS (5-LEVEL FALLBACK WATERFALL)
-:: ======================================================================
-echo [4/6] Installing pandas...
+:: -- pandas fallback waterfall --------------------------------------------------
+"%PY%" -c "import pandas" >nul 2>&1
+IF %ERRORLEVEL% EQU 0 (
+    FOR /F "tokens=*" %%V IN ('"%PY%" -c "import pandas; print(pandas.__version__)" 2^>^&1') DO echo [OK]   pandas %%V
+    SET PANDAS_OK=1
+)
 
-:: Pre-check: already installed from a previous run
-python -c "import pandas" >nul 2>&1
-IF %ERRORLEVEL% EQU 0 SET PANDAS_OK=1
-
-:: Level 1: Latest pandas with any available binary wheel
 IF %PANDAS_OK% EQU 0 (
-    echo        [1/5] Latest pandas binary wheel...
-    python -m pip install "pandas>=2.1.0" --only-binary=:all: --retries 3 --timeout 90 -q 2>>"%LOG%"
-    python -c "import pandas" >nul 2>&1
+    echo        [pandas 1/4] Latest binary wheel...
+    "%PY%" -m pip install "pandas>=2.1.0" --only-binary=:all: --retries 3 --timeout 90 -q 2>>"%LOG%"
+    "%PY%" -c "import pandas" >nul 2>&1
     IF !ERRORLEVEL! EQU 0 SET PANDAS_OK=1
 )
 
-:: Level 2: pandas 2.2.x (broadest cross-platform wheel coverage)
 IF %PANDAS_OK% EQU 0 (
-    echo        [2/5] pandas 2.2.x binary wheel...
-    python -m pip install "pandas>=2.2.0,<2.3.0" --only-binary=:all: --retries 3 --timeout 90 -q 2>>"%LOG%"
-    python -c "import pandas" >nul 2>&1
+    echo        [pandas 2/4] pandas 2.2.x binary...
+    "%PY%" -m pip install "pandas>=2.2.0,<2.3.0" --only-binary=:all: --retries 3 --timeout 90 -q 2>>"%LOG%"
+    "%PY%" -c "import pandas" >nul 2>&1
     IF !ERRORLEVEL! EQU 0 SET PANDAS_OK=1
 )
 
-:: Level 3: pandas 2.1.x (wider Python version compatibility)
 IF %PANDAS_OK% EQU 0 (
-    echo        [3/5] pandas 2.1.x binary wheel...
-    python -m pip install "pandas>=2.1.0,<2.2.0" --only-binary=:all: --retries 3 --timeout 90 -q 2>>"%LOG%"
-    python -c "import pandas" >nul 2>&1
-    IF !ERRORLEVEL! EQU 0 SET PANDAS_OK=1
-)
-
-:: Level 4: SSL bypass for intercepted corporate networks
-IF %PANDAS_OK% EQU 0 (
-    echo        [4/5] SSL-bypass binary install...
-    python -m pip install "pandas>=2.1.0" --only-binary=:all: -q ^
+    echo        [pandas 3/4] SSL-bypass binary...
+    "%PY%" -m pip install "pandas>=2.1.0" --only-binary=:all: -q ^
         --trusted-host pypi.org --trusted-host files.pythonhosted.org ^
         --trusted-host pypi.python.org 2>>"%LOG%"
-    python -c "import pandas" >nul 2>&1
+    "%PY%" -c "import pandas" >nul 2>&1
     IF !ERRORLEVEL! EQU 0 (
         SET PANDAS_OK=1
-        echo [INFO] SSL bypass was required >> "%LOG%"
+        echo [INFO] SSL bypass required for pandas >> "%LOG%"
     )
 )
 
-:: Level 5: Anaconda/Miniconda (ships pre-compiled pandas for all platforms)
 IF %PANDAS_OK% EQU 0 (
     where conda >nul 2>&1
     IF !ERRORLEVEL! EQU 0 (
-        echo        [5/5] conda detected - installing via conda...
+        echo        [pandas 4/4] conda fallback...
         conda install pandas --yes -q 2>>"%LOG%"
-        python -c "import pandas" >nul 2>&1
+        "%PY%" -c "import pandas" >nul 2>&1
         IF !ERRORLEVEL! EQU 0 (
             SET PANDAS_OK=1
             echo [INFO] pandas installed via conda >> "%LOG%"
         )
     ) ELSE (
-        echo        [5/5] conda not found - skipping.
+        echo        [pandas 4/4] conda not available -- skipping.
     )
 )
 
 IF %PANDAS_OK% EQU 0 (
     echo.
-    echo [FAIL] pandas could not be installed automatically.
-    echo [FAIL] All 5 pandas strategies exhausted >> "%LOG%"
+    echo [FAIL] pandas could not be installed.
+    echo [FAIL] All pandas strategies exhausted >> "%LOG%"
     echo.
-    echo   SOLUTIONS - try in this order:
+    echo   SOLUTIONS:
+    echo   [1] Use Python 3.12 or 3.13: https://www.python.org/downloads/
+    echo   [2] Install Anaconda/Miniconda: https://www.anaconda.com/download
+    echo   [3] Install VS C++ Build Tools: https://visualstudio.microsoft.com/visual-cpp-build-tools/
     echo.
-    echo   [1] Recommended - Install Python 3.12 or 3.13:
-    echo       https://www.python.org/downloads/
-    echo       Uninstall Python 3.14+, or use the py launcher:
-    echo         py -3.12 -m pip install pandas
-    echo.
-    echo   [2] Alternative - Install Anaconda or Miniconda:
-    echo       https://www.anaconda.com/download
-    echo       Then re-run this installer.
-    echo.
-    echo   [3] Last Resort  - Install VS Build Tools:
-    echo       https://visualstudio.microsoft.com/visual-cpp-build-tools/
-    echo       Select: "Desktop development with C++"
-    echo       Then re-run this installer.
-    echo.
-    echo   Full error log: %LOG%
     goto :ABORT
-)
-
-FOR /F "tokens=*" %%V IN ('python -c "import pandas; print(pandas.__version__)" 2^>^&1') DO (
-    echo [OK]   pandas %%V installed
-    echo [OK]   pandas %%V >> "%LOG%"
 )
 echo.
 
-:: ======================================================================
-::  STEP 5/6 - IMPORT VERIFICATION
-:: ======================================================================
-echo [5/6] Verifying all packages...
+:: ==============================================================================
+::  STEP 5/5 -- IMPORT VERIFICATION  (venv Python)
+:: ==============================================================================
+echo [5/5] Verifying packages...
 set "WARN_COUNT=0"
 
-for %%M in (fastapi uvicorn pydantic pandas numpy openpyxl xlsxwriter requests httpx psutil polars pyarrow duckdb dateutil dotenv multipart) do (
-    python -c "import %%M" >nul 2>&1
+for %%M in (fastapi uvicorn pydantic pydantic_core pandas numpy openpyxl xlsxwriter requests httpx psutil polars pyarrow duckdb dateutil dotenv multipart) do (
+    "%PY%" -c "import %%M" >nul 2>&1
     IF !ERRORLEVEL! EQU 0 (
         echo [OK]   %%M
     ) ELSE (
-        echo [WARN] %%M  ^<-- import failed
+        echo [WARN] %%M  -- import failed
         echo [WARN] %%M import failed >> "%LOG%"
         set /a WARN_COUNT+=1
     )
@@ -258,26 +253,24 @@ for %%M in (fastapi uvicorn pydantic pandas numpy openpyxl xlsxwriter requests h
 
 IF %WARN_COUNT% GTR 0 (
     echo.
-    echo [WARN] %WARN_COUNT% package^(s^) could not be imported.
-    echo        Server will start but some features may be limited.
-    echo        Full details: %LOG%
+    echo [WARN] %WARN_COUNT% package^(s^) failed import -- check %LOG%
+    echo        Server will attempt to start; some features may be limited.
 ) ELSE (
     echo.
-    echo [OK]   All packages verified successfully.
+    echo [OK]   All packages verified.
 )
 echo.
 
-:: ---- Verify Main.py exists ----
 IF NOT EXIST Main.py (
-    echo [FAIL] Main.py not found in: %CD%
+    echo [FAIL] Main.py not found in %CD%
     echo [FAIL] Main.py missing >> "%LOG%"
     goto :ABORT
 )
 
-:: ======================================================================
-::  STEP 6/6 - LAUNCH SERVER
-:: ======================================================================
-echo [6/6] Starting FastAPI server...
+:: ==============================================================================
+:LAUNCH
+:: ==============================================================================
+echo [START] Launching FastAPI server via venv...
 echo.
 echo ================================================
 echo   URL:   http://127.0.0.1:8000
@@ -287,17 +280,17 @@ echo ================================================
 echo.
 echo [INFO] Server launched at %TIME% >> "%LOG%"
 
-python -m uvicorn Main:app --reload --port 8000 --host 127.0.0.1
+"%PY%" -m uvicorn Main:app --reload --port 8000 --host 127.0.0.1
 
 set "UVICORN_EXIT=%ERRORLEVEL%"
 echo.
 IF %UVICORN_EXIT% NEQ 0 (
-    echo [FAIL] Server exited with error code %UVICORN_EXIT%
+    echo [FAIL] Server exited with code %UVICORN_EXIT%
     echo [FAIL] uvicorn exited with code %UVICORN_EXIT% >> "%LOG%"
     echo.
     echo   Possible causes:
-    echo     - Import error in Main.py (see console output above)
-    echo     - Port 8000 still occupied (close any app using it)
+    echo     - Import error in Main.py ^(see console output above^)
+    echo     - Port 8000 still in use
     echo     - Missing file referenced by Main.py
     echo.
     echo   Full log: %LOG%
@@ -307,15 +300,15 @@ IF %UVICORN_EXIT% NEQ 0 (
 )
 goto :END
 
-:: ======================================================================
+:: ==============================================================================
 :ABORT
 echo.
 echo ================================================
-echo   Setup failed. See full log:
+echo   Setup failed. Full log:
 echo   %LOG%
 echo ================================================
 set "EXIT_CODE=1"
-echo [FAIL] Install aborted at %TIME% >> "%LOG%"
+echo [FAIL] Aborted at %TIME% >> "%LOG%"
 
 :END
 echo.
