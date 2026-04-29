@@ -8597,37 +8597,30 @@ def _pl_clean_num_expr(col_name):
     )
 
 def _polars_write_source_target_csv(joined, leg_only, orc_only, cols_to_compare, csv_path, internal_key):
-    """Write full source/target data directly from Polars to CSV. Zero pandas."""
+    """Write full source/target data directly from Polars to CSV. Zero pandas.
+    Column order: all PS (_S) columns first, then all OC (_T) columns, then Record Status."""
     import polars as pl
-    select_exprs = []
-    for col in cols_to_compare:
-        select_exprs.append(pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{col}_S"))
-        select_exprs.append(pl.col(f"{col}_T").cast(pl.Utf8).fill_null("").alias(f"{col}_T"))
-    select_exprs.append(pl.lit("MATCHED").alias("Record Status"))
-    matched = joined.select(select_exprs)
+    # All PS columns first, then all OC columns (not interleaved)
+    s_exprs = [pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{col}_S") for col in cols_to_compare]
+    t_exprs = [pl.col(f"{col}_T").cast(pl.Utf8).fill_null("").alias(f"{col}_T") for col in cols_to_compare]
+    matched = joined.select(s_exprs + t_exprs + [pl.lit("MATCHED").alias("Record Status")])
     parts = [matched]
 
     if len(leg_only) > 0:
-        l_exprs = []
-        for col in cols_to_compare:
-            if col in leg_only.columns:
-                l_exprs.append(pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{col}_S"))
-            else:
-                l_exprs.append(pl.lit("").alias(f"{col}_S"))
-            l_exprs.append(pl.lit("").alias(f"{col}_T"))
-        l_exprs.append(pl.lit("MISSING_IN_TARGET").alias("Record Status"))
-        parts.append(leg_only.select(l_exprs))
+        l_s = [
+            (pl.col(col).cast(pl.Utf8).fill_null("") if col in leg_only.columns else pl.lit("")).alias(f"{col}_S")
+            for col in cols_to_compare
+        ]
+        l_t = [pl.lit("").alias(f"{col}_T") for col in cols_to_compare]
+        parts.append(leg_only.select(l_s + l_t + [pl.lit("MISSING_IN_TARGET").alias("Record Status")]))
 
     if len(orc_only) > 0:
-        o_exprs = []
-        for col in cols_to_compare:
-            o_exprs.append(pl.lit("").alias(f"{col}_S"))
-            if col in orc_only.columns:
-                o_exprs.append(pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{col}_T"))
-            else:
-                o_exprs.append(pl.lit("").alias(f"{col}_T"))
-        o_exprs.append(pl.lit("MISSING_IN_SOURCE").alias("Record Status"))
-        parts.append(orc_only.select(o_exprs))
+        o_s = [pl.lit("").alias(f"{col}_S") for col in cols_to_compare]
+        o_t = [
+            (pl.col(col).cast(pl.Utf8).fill_null("") if col in orc_only.columns else pl.lit("")).alias(f"{col}_T")
+            for col in cols_to_compare
+        ]
+        parts.append(orc_only.select(o_s + o_t + [pl.lit("MISSING_IN_SOURCE").alias("Record Status")]))
 
     full = pl.concat(parts)
     full.write_csv(csv_path)
@@ -9290,15 +9283,18 @@ async def post_validation_excel(
         align_center = Alignment(horizontal="center", vertical="center")
 
         def style_full_data_header_only(ws, num_comparison_cols):
+            border_ps_last  = Border(left=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"), right=Side(style="medium"))
+            border_oc_first = Border(left=Side(style="medium"), top=Side(style="thin"), bottom=Side(style="thin"), right=Side(style="thin"))
             ws.freeze_panes = "A2"
             for cell in ws[1]:
                 cell.font = font_white
                 cell.alignment = align_center
-                cell.border = border_thin
                 if cell.column <= num_comparison_cols:
                     cell.fill = fill_header_ps
+                    cell.border = border_ps_last if cell.column == num_comparison_cols else border_thin
                 else:
                     cell.fill = fill_header_oc
+                    cell.border = border_oc_first if cell.column == num_comparison_cols + 1 else border_thin
             for col in ws.iter_cols(max_row=50):
                 max_length = 0
                 col_letter = get_column_letter(col[0].column)
@@ -9362,6 +9358,7 @@ async def post_validation_excel(
                 if sheet.startswith(sheet_discrepancies):
                     style_sheet_header(main_workbook, sheet, fill_header_err)
             style_configuration_sheet(main_workbook, "Configuration")
+            main_workbook["Configuration"].sheet_state = "hidden"
             if includeSourceTargetFiles:
                 for sheet_name in main_workbook.sheetnames:
                     if sheet_name.startswith(sheet_full_data):
@@ -10173,14 +10170,15 @@ def _run_validation_job(job_id: str, p: dict):
         matched_keys_series = joined[INTERNAL_KEY].clone()
 
         # Write full data CSV directly from Polars (avoids giant pandas intermediate later)
+        # Column order: all PS (_S) first, then all OC (_T), then Record Status
         _job_update(job_id, progress=44, stage="Writing matched data to CSV")
         logger.info(f"[{job_id[:8]}] Writing full matched data CSV...")
         num_comparison_cols = len(cols_to_compare)
-        full_select = []
-        for col in cols_to_compare:
-            full_select.append(pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{col}_S"))
-            full_select.append(pl.col(f"{col}_T").cast(pl.Utf8).fill_null("").alias(f"{col}_T"))
-        full_select.append(pl.lit("MATCHED").alias("Record Status"))
+        full_select = (
+            [pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{col}_S") for col in cols_to_compare]
+            + [pl.col(f"{col}_T").cast(pl.Utf8).fill_null("").alias(f"{col}_T") for col in cols_to_compare]
+            + [pl.lit("MATCHED").alias("Record Status")]
+        )
         joined.select(full_select).write_csv(full_data_csv_path)
         gc.collect()
         logger.info(f"[{job_id[:8]}] Matched full data written to CSV")
@@ -10435,7 +10433,6 @@ def _run_validation_job(job_id: str, p: dict):
             ["", f"{tgt_label} File Name", p["oracle_filename"], "", "", ""],
             ["", f"{tgt_label} Records Count", f"{oracle_count:,}", "", "", ""],
             ["", "Validation DateTime", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "", "", ""],
-            ["" , "Processing Engine", "Polars (High-Performance)", "", "", ""],
             ["", "", "", "", "", ""],
             ["", "Missing Records Summary", "", "Mythics Comments", "Oracle Comments", "ParkView Comments"],
             ["", f"Records Missing in {src_label}", f"{count_missing_ps:,}", "", "", ""],
@@ -10511,18 +10508,20 @@ def _run_validation_job(job_id: str, p: dict):
                 ws.column_dimensions[get_column_letter(col[0].column)].width = min(max(ml + 2, 12), 45)
 
         def _style_full_data_header(ws, n_compare_cols):
-            """Style the PeopleSoft\u2013Oracle Cloud full-data sheet with
-            dual-colour headers (PS blue | OC teal) matching the regular
-            endpoint's style_full_data_header_only."""
+            """Style the full-data sheet with dual-colour headers (PS blue | OC teal)
+            and a medium border separating the two groups."""
+            border_ps_last  = Border(left=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"), right=Side(style="medium"))
+            border_oc_first = Border(left=Side(style="medium"), top=Side(style="thin"), bottom=Side(style="thin"), right=Side(style="thin"))
             ws.freeze_panes = "A2"
             for cell in ws[1]:
                 cell.font = font_white
                 cell.alignment = align_center
-                cell.border = border_thin
                 if cell.column <= n_compare_cols:
                     cell.fill = fill_header_ps
+                    cell.border = border_ps_last if cell.column == n_compare_cols else border_thin
                 else:
                     cell.fill = fill_header_oc
+                    cell.border = border_oc_first if cell.column == n_compare_cols + 1 else border_thin
             for col_cells in ws.iter_cols(max_row=min(50, ws.max_row)):
                 ml = max((len(str(c.value)) if c.value else 0) for c in col_cells)
                 ws.column_dimensions[get_column_letter(col_cells[0].column)].width = min(
@@ -10551,6 +10550,7 @@ def _run_validation_job(job_id: str, p: dict):
                 if sn.startswith(sheet_discrepancies):
                     _style_header(wb, sn, fill_header_err)
             _style_config(wb)
+            wb["Configuration"].sheet_state = "hidden"
 
             # Style full data sheets inside main workbook (if included)
             if include_src_tgt:
