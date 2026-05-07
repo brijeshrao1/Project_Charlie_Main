@@ -3328,12 +3328,8 @@ async def validate_data(payload: ValidatePayload):
                 if not file_loaded:
                         logger.error("CRITICAL: Delta file exists but could not be read. Validation will proceed assuming New Hires.")
             else:
-                    logger.warning(f"Delta file not found at {delta_file_path}. Validation will proceed assuming New Hires.")
-                    logger.warning(f"Calling the oracle to fetch report with {customerName} and {instanceName}")
-                    Report_Loading(customerName, instanceName, component_name)
-                    delta_df = pd.read_excel(delta_file_path, engine='openpyxl')
-                    file_loaded = True
-                    logger.info("Successfully loaded Delta file using openpyxl after fetching from Oracle.")
+                    logger.warning(f"Delta file not found at {delta_file_path}. Proceeding without delta logic (treat all as New Hires).")
+                    logger.warning("To enable delta validation, fetch the Oracle report first via the Fetch Delta Report button.")
             # Execute Logic if Delta file is loaded
             if not delta_df.empty:
                     try:
@@ -8747,20 +8743,29 @@ def enforce_sheet_column_limit(df: pd.DataFrame, sheet_name: str):
             )
         )
 
-EXCEL_MAX_ROWS = 1_048_000 
+EXCEL_MAX_ROWS = 1_048_000
+
+def _safe_sheet_name(name: str, max_len: int = 31) -> str:
+    for ch in r'\/*?:[]':
+        name = name.replace(ch, '_')
+    return name[:max_len]
+
 def write_df_excel_paginated(
     writer,
     df: pd.DataFrame,
     base_sheet_name: str,
     max_rows: int = EXCEL_MAX_ROWS
 ):
+    # Use 28-char base so paginated variants (_N, _NN) stay within Excel's 31-char limit.
+    safe_base = _safe_sheet_name(base_sheet_name, max_len=28)
+
     if len(df) <= max_rows:
-        df.to_excel(writer, index=False, sheet_name=base_sheet_name)
-        return [base_sheet_name]
+        df.to_excel(writer, index=False, sheet_name=safe_base)
+        return [safe_base]
 
     sheet_names = []
     for idx, start in enumerate(range(0, len(df), max_rows), start=1):
-        sheet_name = f"{base_sheet_name}_{idx}"
+        sheet_name = f"{safe_base}_{idx}"
         df.iloc[start:start + max_rows].to_excel(
             writer,
             index=False,
@@ -9259,10 +9264,10 @@ async def post_validation_excel(
                         max_length = max(max_length, len(str(cell.value)))
                 ws.column_dimensions[col_letter].width = min(max(max_length + 2, 12), 45)
 
-        sheet_missing_ps = f"Missing in {src_label}"
-        sheet_missing_oc = f"Missing in {tgt_label}"
+        sheet_missing_ps = _safe_sheet_name(f"Missing in {src_label}")
+        sheet_missing_oc = _safe_sheet_name(f"Missing in {tgt_label}")
         sheet_discrepancies = "Data Discrepancies"
-        sheet_full_data = f"{src_label} - {tgt_label} Data"
+        sheet_full_data = _safe_sheet_name(f"{src_label} - {tgt_label} Data", max_len=28)
 
         enforce_sheet_column_limit(summary_df, "Summary")
         enforce_sheet_column_limit(validation_df, "Data Discrepancies")
@@ -10465,8 +10470,8 @@ def _run_validation_job(job_id: str, p: dict):
         )
         align_center = Alignment(horizontal="center", vertical="center")
 
-        sheet_missing_ps = f"Missing in {src_label}"
-        sheet_missing_oc = f"Missing in {tgt_label}"
+        sheet_missing_ps = _safe_sheet_name(f"Missing in {src_label}")
+        sheet_missing_oc = _safe_sheet_name(f"Missing in {tgt_label}")
         sheet_discrepancies = "Data Discrepancies"
 
         def _style_header(wb, sn, fill):
@@ -10530,7 +10535,7 @@ def _run_validation_job(job_id: str, p: dict):
 
         _job_update(job_id, progress=88, stage="Styling Excel sheets")
 
-        sheet_full_data = f"{src_label} - {tgt_label} Data"
+        sheet_full_data = _safe_sheet_name(f"{src_label} - {tgt_label} Data", max_len=28)
 
         with pd.ExcelWriter(main_output_path, engine="openpyxl") as writer:
             summary_df.to_excel(writer, index=False, header=False, sheet_name="Summary")
