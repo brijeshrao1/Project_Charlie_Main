@@ -1,4 +1,5 @@
-﻿import pandas as pd
+﻿import time
+import pandas as pd
 from fastapi import FastAPI, HTTPException, Request, Body, Query, Form, UploadFile, File, status, BackgroundTasks, Depends
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 import tempfile
@@ -8441,36 +8442,29 @@ def _detect_date_fmt(values, formats=_COMMON_DATE_FORMATS):
     return None
 
 
+# Compiled once at module load — used by _pl_is_date_like_column for fast date detection
+_DATE_LIKE_RE = re.compile(
+    r'^\d{4}[-/]\d{1,2}[-/]\d{1,2}'       # YYYY-MM-DD, YYYY/MM/DD
+    r'|^\d{1,2}[-/]\d{1,2}[-/]\d{4}'       # DD-MM-YYYY, MM/DD/YYYY
+    r'|^\d{1,2}[-/]\d{1,2}[-/]\d{2}\b'     # DD-MM-YY
+    r'|^\d{4}\d{2}\d{2}$'                   # YYYYMMDD
+    r'|^\d{4}[-/]\d{1,2}[-/]\d{1,2}[T ]',  # ISO-8601 with time
+    re.ASCII,
+)
+
+
 def _pl_is_date_like_column(df, col_name, sample_size=50):
-    """Check if a Polars column likely contains date values by sampling."""
+    """Check if a Polars column likely contains date values by sampling (regex, no dateutil)."""
     import polars as pl
     if col_name not in df.columns:
         return False
     sample = (df[col_name].cast(pl.Utf8).fill_null("")
               .head(sample_size)
               .to_list())
-    # Filter non-empty, non-null values
     vals = [v.strip() for v in sample if v.strip() not in ('', 'nan', 'None', 'NaN', 'NaT')]
     if not vals:
         return False
-    parsed = 0
-    for val in vals:
-        # Skip pure numbers without date separators
-        try:
-            float(val)
-            if not any(sep in val for sep in ['-', '/', '.']):
-                continue
-        except ValueError:
-            pass
-        if not any(sep in val for sep in ['-', '/', '.', 'T']):
-            continue
-        try:
-            from dateutil import parser as du_parser
-            dt = du_parser.parse(val, fuzzy=False)
-            if 1900 <= dt.year <= 2100:
-                parsed += 1
-        except Exception:
-            pass
+    parsed = sum(1 for v in vals if _DATE_LIKE_RE.match(v))
     return parsed >= max(len(vals) * 0.6, 1)
 
 
@@ -8532,17 +8526,23 @@ def _pl_apply_date_normalization(df, date_cols, all_cols, auto_detect=False, com
 
 
 def _pl_detect_numeric_cols(df_l, df_o, cols_to_compare):
-    """Detect numeric columns using Polars-native sampling. Zero pandas."""
+    """Detect numeric columns — two head() scans for all columns instead of N×2."""
     import polars as pl
     numeric_columns = set()
     sentinel = ["", "nan", "None", "NaN"]
-    for col in cols_to_compare:
+
+    valid_cols = [c for c in cols_to_compare if c in df_l.columns and c in df_o.columns]
+    if not valid_cols:
+        return numeric_columns
+
+    # One scan per side, all columns at once
+    l_sample = df_l.select([pl.col(c).cast(pl.Utf8).alias(c) for c in valid_cols]).head(2500)
+    o_sample = df_o.select([pl.col(c).cast(pl.Utf8).alias(c) for c in valid_cols]).head(2500)
+    combined = pl.concat([l_sample, o_sample])
+
+    for col in valid_cols:
         try:
-            sample = pl.concat([
-                df_l.select(pl.col(col).cast(pl.Utf8)).head(2500),
-                df_o.select(pl.col(col).cast(pl.Utf8)).head(2500),
-            ])
-            non_empty = sample.filter(~pl.col(col).is_in(sentinel))
+            non_empty = combined.filter(~pl.col(col).is_in(sentinel)).select(pl.col(col))
             if len(non_empty) == 0:
                 continue
             cleaned = non_empty.with_columns(
@@ -8551,9 +8551,7 @@ def _pl_detect_numeric_cols(df_l, df_o, cols_to_compare):
             )
             num_count = cleaned.select(pl.col("_ntest").is_not_null().sum()).item()
             total = len(non_empty)
-            has_dash = non_empty.select(
-                pl.col(col).str.contains(r"\-").mean()
-            ).item() or 0.0
+            has_dash = non_empty.select(pl.col(col).str.contains(r"\-").mean()).item() or 0.0
             if (num_count / total) >= 0.8 and has_dash < 0.2:
                 numeric_columns.add(col)
         except Exception:
@@ -8591,6 +8589,49 @@ def _pl_clean_num_expr(col_name):
         .cast(pl.Float64, strict=False)
         .round(4)
     )
+
+def _pl_normalize_key_cols(df, key_cols):
+    """Normalize key columns in Polars: strip, remove .0 suffix, blank out null sentinels."""
+    import polars as pl
+    exprs = []
+    for col in key_cols:
+        if col not in df.columns:
+            continue
+        exprs.append(
+            pl.col(col).cast(pl.Utf8).fill_null("")
+            .str.strip_chars()
+            .str.replace(r"\.0+$", "", literal=False)
+            .str.replace_all(r"^(?:nan|None|NaN)$", "")
+            .alias(col)
+        )
+    return df.with_columns(exprs) if exprs else df
+
+
+def _pl_gen_composite_key(key_cols):
+    """Return a Polars expr that concatenates key columns with '|' separator."""
+    import polars as pl
+    return pl.concat_str(
+        [pl.col(c).cast(pl.Utf8).fill_null("") for c in key_cols],
+        separator="|",
+    )
+
+
+def _pl_add_positional_key(df, key_col):
+    """Append row-position-within-group suffix to key_col to handle duplicate keys safely."""
+    import polars as pl
+    return (
+        df.with_row_index("_global_rn")
+        .with_columns(
+            (pl.col("_global_rn") - pl.col("_global_rn").min().over(key_col))
+            .cast(pl.Utf8)
+            .alias("_rn")
+        )
+        .with_columns(
+            (pl.col(key_col) + "|_rn=" + pl.col("_rn")).alias(key_col)
+        )
+        .drop(["_global_rn", "_rn"])
+    )
+
 
 def _polars_write_source_target_csv(joined, leg_only, orc_only, cols_to_compare, csv_path, internal_key):
     """Write full source/target data directly from Polars to CSV. Zero pandas.
@@ -9249,6 +9290,7 @@ async def post_validation_excel(
             # Body styling
             for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
                 for cell in row:
+                    cell.font = font_normal
                     cell.border = border_thin
 
                     # Center align Yes / No / Validate columns
@@ -9275,9 +9317,10 @@ async def post_validation_excel(
         enforce_sheet_column_limit(oracle_only_df, f"Missing in {src_label}")
 
         # Define Styling Functions (same as before but included for completeness)
-        font_white = Font(name="Calibri", size=9, color="FFFFFF", bold=True)
-        font_black = Font(name="Calibri", size=9, color="000000", bold=True)
-        font_bold_black = Font(name="Calibri", size=9, bold=True)
+        font_white = Font(name="Calibri", size=8, color="FFFFFF", bold=True)
+        font_black = Font(name="Calibri", size=8, color="000000", bold=True)
+        font_bold_black = Font(name="Calibri", size=8, bold=True)
+        font_normal = Font(name="Calibri", size=8)
         fill_header_ps = PatternFill("solid", fgColor="1F497D")
         fill_header_oc = PatternFill("solid", fgColor="31869B")
         fill_header_err = PatternFill("solid", fgColor="C0504D")
@@ -9322,6 +9365,11 @@ async def post_validation_excel(
                         cell.fill = fill_orange
                         cell.font = font_black
                         comment_col_indices.append(cell.column)
+                # Body font (capped at 5000 rows for large sheets)
+                body_cap = min(ws.max_row, 5000)
+                for body_row in ws.iter_rows(min_row=2, max_row=body_cap):
+                    for cell in body_row:
+                        cell.font = font_normal
                 # Auto-width: only sample first 50 rows for speed
                 for col in ws.iter_cols(max_row=min(50, ws.max_row)):
                     max_length = 0
@@ -9378,12 +9426,14 @@ async def post_validation_excel(
             
             for row in ws_sum.iter_rows(min_row=1, max_row=ws_sum.max_row):
                 if len(row) < 3: continue
+                for cell in row:
+                    cell.font = font_normal
                 cell_b = row[1]
                 if not cell_b.value: continue
                 cell_b.border = border_thin
                 row[2].border = border_thin
                 comment_cells = [ws_sum.cell(row=cell_b.row, column=c) for c in [4, 5, 6]]
-                
+
                 if cell_b.value in ["Missing Records Summary", "Data Discrepancies Summary"]:
                     ws_sum.merge_cells(start_row=cell_b.row, start_column=2, end_row=cell_b.row, end_column=3)
                     cell_b.fill = fill_green
@@ -9448,9 +9498,17 @@ async def post_validation_excel(
 
 # ── In-memory job tracker ────────────────────────────────────────────────
 import threading as _threading
+import concurrent.futures as _cf
 
 _validation_jobs: Dict[str, Dict[str, Any]] = {}
 _validation_jobs_lock = _threading.Lock()
+
+# Bounded executor: prevents OOM from concurrent large validation jobs.
+# Configurable via VALIDATION_MAX_WORKERS env var (default: 2).
+_VALIDATION_EXECUTOR = _cf.ThreadPoolExecutor(
+    max_workers=int(os.environ.get("VALIDATION_MAX_WORKERS", "2")),
+    thread_name_prefix="validation",
+)
 
 def _job_update(job_id: str, **kwargs):
     """Thread-safe update of a job's progress dict."""
@@ -9570,13 +9628,8 @@ async def post_validation_large_scale(
         "temp_dir": temp_dir,
     }
 
-    # Launch processing in a background thread (does NOT block event loop)
-    _threading.Thread(
-        target=_run_validation_job,
-        args=(job_id, job_params),
-        daemon=True,
-        name=f"validation-{job_id[:8]}",
-    ).start()
+    # Launch in the bounded executor — queues excess jobs instead of OOMing the server
+    _VALIDATION_EXECUTOR.submit(_run_validation_job, job_id, job_params)
 
     return {"job_id": job_id}
 
@@ -9946,65 +9999,64 @@ def _run_validation_job(job_id: str, p: dict):
             })
         config_df = pd.DataFrame(config_rows)
 
-        # ── Stage 2: Load Files with calamine (5–20%) ──────────────────
-        _job_update(job_id, progress=5, stage="Reading source file (calamine)")
-        logger.info(f"[{job_id[:8]}] Loading files with calamine...")
+        # ── Stage 2: Load Files — parallel load, stay in Polars, no pandas ─
+        _job_update(job_id, progress=8, stage="Reading source and target files (parallel)")
+        logger.info(f"[{job_id[:8]}] Loading both files in parallel (calamine engine)...")
 
-        _job_update(job_id, progress=8, stage="Reading source file (Polars native)")
-        _lf_legacy = _polars_read_file(p["legacy_path"], p["legacySheet"])
-        legacy_df = _lf_legacy.collect().to_pandas()
-        del _lf_legacy
-        legacy_df.columns = legacy_df.columns.astype(str).str.strip()
+        def _load_frame(path, sheet):
+            return _polars_read_file(path, sheet).collect()
 
-        _job_update(job_id, progress=15, stage="Reading target file (Polars native)")
-        _lf_oracle = _polars_read_file(p["oracle_path"], p["oracleSheet"])
-        oracle_df = _lf_oracle.collect().to_pandas()
-        del _lf_oracle
-        oracle_df.columns = oracle_df.columns.astype(str).str.strip()
+        _t_load = time.perf_counter()
+        with _cf.ThreadPoolExecutor(max_workers=2, thread_name_prefix="file-load") as _load_pool:
+            _f_legacy = _load_pool.submit(_load_frame, p["legacy_path"], p["legacySheet"])
+            _f_oracle = _load_pool.submit(_load_frame, p["oracle_path"], p["oracleSheet"])
+            pl_legacy = _f_legacy.result()
+            pl_oracle = _f_oracle.result()
+        logger.info(f"[{job_id[:8]}] Both files loaded in {time.perf_counter()-_t_load:.2f}s")
 
-        legacy_count = len(legacy_df)
-        oracle_count = len(oracle_df)
+        legacy_count, oracle_count = len(pl_legacy), len(pl_oracle)
         _job_update(job_id, progress=20,
                     stage=f"Files loaded — {legacy_count:,} + {oracle_count:,} rows")
         logger.info(f"[{job_id[:8]}] Loaded — Legacy: {legacy_count:,}, Oracle: {oracle_count:,}")
 
-        # ── Stage 3: Column Alignment & Validation (25%) ────────────────
+        # Evaluate include_src_tgt early — skips expensive CSV write when unneeded
+        include_src_tgt = p.get("includeSourceTargetFiles", False)
+
+        # ── Stage 3: Column Alignment & Validation (25%) — pure Polars ──
         _job_update(job_id, progress=22, stage="Aligning column names")
 
         oracle_to_legacy = {v: k for k, v in mappings_dict.items()}
         oracle_to_legacy_lower = {v.strip().lower(): k for k, v in mappings_dict.items()}
 
-        cols_to_rename = {}
-        for col in oracle_df.columns:
+        # Build oracle rename map using Polars column list
+        cols_to_rename_pl: Dict[str, str] = {}
+        for col in pl_oracle.columns:
             if col in oracle_to_legacy:
-                cols_to_rename[col] = oracle_to_legacy[col]
+                cols_to_rename_pl[col] = oracle_to_legacy[col]
             elif col.strip().lower() in oracle_to_legacy_lower:
-                cols_to_rename[col] = oracle_to_legacy_lower[col.strip().lower()]
+                cols_to_rename_pl[col] = oracle_to_legacy_lower[col.strip().lower()]
+        if cols_to_rename_pl:
+            pl_oracle = pl_oracle.rename(cols_to_rename_pl)
 
-        oracle_renamed = oracle_df.rename(columns=cols_to_rename)
-        del oracle_df
-        gc.collect()
-
-        # Normalise legacy column names to match mapping keys (case-insensitive)
+        # Normalise legacy column names (case-insensitive)
         legacy_mapped_lower = {k.strip().lower(): k for k in mappings_dict.keys()}
-        legacy_cols_rename = {}
-        for col in legacy_df.columns:
+        legacy_rename_pl: Dict[str, str] = {}
+        for col in pl_legacy.columns:
             lk = col.strip().lower()
             if lk in legacy_mapped_lower and col != legacy_mapped_lower[lk]:
-                legacy_cols_rename[col] = legacy_mapped_lower[lk]
-        if legacy_cols_rename:
-            legacy_df = legacy_df.rename(columns=legacy_cols_rename)
+                legacy_rename_pl[col] = legacy_mapped_lower[lk]
+        if legacy_rename_pl:
+            pl_legacy = pl_legacy.rename(legacy_rename_pl)
 
-        legacy_cols = list(legacy_df.columns)
-        oracle_cols = list(oracle_renamed.columns)
+        legacy_cols = pl_legacy.columns
+        oracle_cols = pl_oracle.columns
 
         # Resolve key_cols_list and mappings_dict against actual column names
         oracle_col_lower = {c.strip().lower(): c for c in oracle_cols}
         legacy_col_lower = {c.strip().lower(): c for c in legacy_cols}
-        key_cols_list = [
-            oracle_col_lower.get(k.strip().lower(), k) for k in key_cols_list
-        ]
-        resolved_mappings = {}
+        key_cols_list = [oracle_col_lower.get(k.strip().lower(), k) for k in key_cols_list]
+
+        resolved_mappings: Dict[str, str] = {}
         for l_col, o_col in mappings_dict.items():
             actual_legacy = legacy_col_lower.get(l_col.strip().lower(), l_col)
             actual_oracle = oracle_col_lower.get(l_col.strip().lower(), l_col)
@@ -10012,148 +10064,97 @@ def _run_validation_job(job_id: str, p: dict):
             resolved_mappings[common_name] = o_col
         mappings_dict = resolved_mappings
 
-        # Resolve included_cols_list and date sets
         included_cols_list = [
             oracle_col_lower.get(c.strip().lower(), legacy_col_lower.get(c.strip().lower(), c))
             for c in included_cols_list
         ]
-        legacy_date_set = {
-            legacy_col_lower.get(c.strip().lower(), c) for c in legacy_date_set
-        }
+        legacy_date_set = {legacy_col_lower.get(c.strip().lower(), c) for c in legacy_date_set}
         target_date_set_resolved = set()
         for c in target_date_set:
             mapped = oracle_to_legacy.get(c, c)
-            actual = oracle_col_lower.get(mapped.strip().lower(), mapped)
-            target_date_set_resolved.add(actual)
+            target_date_set_resolved.add(oracle_col_lower.get(mapped.strip().lower(), mapped))
         target_date_set = target_date_set_resolved
 
-        missing_keys = [k for k in key_cols_list if k not in oracle_renamed.columns]
+        missing_keys = [k for k in key_cols_list if k not in pl_oracle.columns]
         if missing_keys:
-            raise ValueError(f"Key columns missing in Oracle after rename: {missing_keys}")
+            raise ValueError(f"Key columns missing in target after rename: {missing_keys}")
 
-        missing = []
+        col_errors = []
         for l_col, o_col in mappings_dict.items():
-            if l_col not in legacy_df.columns:
-                missing.append(f"{src_label} column '{l_col}' not found")
-            if l_col not in oracle_renamed.columns:
-                missing.append(f"{tgt_label} column '{o_col}' not found after rename")
-        if missing:
-            raise ValueError(f"Column errors: {'; '.join(missing)}")
+            if l_col not in pl_legacy.columns:
+                col_errors.append(f"{src_label} column '{l_col}' not found")
+            if l_col not in pl_oracle.columns:
+                col_errors.append(f"{tgt_label} column '{o_col}' not found after rename")
+        if col_errors:
+            raise ValueError(f"Column errors: {'; '.join(col_errors)}")
 
-        cols_to_compare = [k for k in mappings_dict if k in legacy_df.columns and k in oracle_renamed.columns]
-        _job_update(job_id, progress=25, stage=f"Validating {len(cols_to_compare)} mapped columns")
+        cols_to_compare = [k for k in mappings_dict if k in pl_legacy.columns and k in pl_oracle.columns]
+        num_comparison_cols = len(cols_to_compare)
+        _job_update(job_id, progress=25, stage=f"Validating {num_comparison_cols} mapped columns")
 
-        # ── Stage 4: Normalise keys & dates (28–35%) ──────────────────
-        _job_update(job_id, progress=28, stage="Normalising keys & dates")
+        # ── Stage 4: Normalise keys & dates — Polars-native ──────────────
+        _job_update(job_id, progress=28, stage="Normalising keys & dates (Polars)")
 
-        def normalize_key_columns(df, key_cols):
-            for col in key_cols:
-                if col in df.columns:
-                    df[col] = (
-                        df[col].astype(str).str.strip()
-                        .str.replace(r'\.0+$', '', regex=True)
-                        .replace({'nan': '', 'None': '', 'NaN': ''})
-                        .fillna('')
-                    )
-            return df
+        # Key normalisation: strip whitespace, drop .0 suffix, blank sentinels
+        pl_legacy = _pl_normalize_key_cols(pl_legacy, key_cols_list)
+        pl_oracle = _pl_normalize_key_cols(pl_oracle, key_cols_list)
 
-        legacy_df = normalize_key_columns(legacy_df, key_cols_list)
-        oracle_renamed = normalize_key_columns(oracle_renamed, key_cols_list)
-
-        legacy_date_cols_present = {c for c in legacy_date_set if c in legacy_df.columns}
-        target_date_cols_mapped = set()
+        # Date normalisation: explicit + auto-detected via Polars sampling
+        legacy_date_cols_explicit = {c for c in legacy_date_set if c in pl_legacy.columns}
+        target_date_cols_explicit = set()
         for col in target_date_set:
             mapped = oracle_to_legacy.get(col, col)
-            if mapped in oracle_renamed.columns:
-                target_date_cols_mapped.add(mapped)
+            if mapped in pl_oracle.columns:
+                target_date_cols_explicit.add(mapped)
 
-        # Auto-detect date columns from ALL comparison columns (catches unmarked dates)
-        logger.info(f"[{job_id[:8]}] Auto-detecting date columns from {len(cols_to_compare)} comparison columns...")
-        auto_detected_date_cols = set()
-        for col in cols_to_compare:
-            is_date_in_legacy = col in legacy_df.columns and _is_date_like_column(legacy_df[col])
-            is_date_in_oracle = col in oracle_renamed.columns and _is_date_like_column(oracle_renamed[col])
-            if is_date_in_legacy or is_date_in_oracle:
-                auto_detected_date_cols.add(col)
-        
-        # Merge explicit + auto-detected
-        all_legacy_date_cols = legacy_date_cols_present | auto_detected_date_cols
-        all_oracle_date_cols = target_date_cols_mapped | auto_detected_date_cols
-        
-        if auto_detected_date_cols - legacy_date_cols_present:
-            logger.info(f"[{job_id[:8]}] Auto-detected additional date columns: "
-                        f"{auto_detected_date_cols - legacy_date_cols_present}")
+        logger.info(f"[{job_id[:8]}] Applying date normalisation (auto-detect enabled)...")
+        pl_legacy = _pl_apply_date_normalization(
+            pl_legacy, legacy_date_cols_explicit, pl_legacy.columns,
+            auto_detect=True, compare_cols=cols_to_compare
+        )
+        pl_oracle = _pl_apply_date_normalization(
+            pl_oracle, target_date_cols_explicit, pl_oracle.columns,
+            auto_detect=True, compare_cols=cols_to_compare
+        )
 
-        legacy_df = fast_normalize_dates(legacy_df, all_legacy_date_cols)
-        oracle_renamed = fast_normalize_dates(oracle_renamed, all_oracle_date_cols)
-
+        # Composite key generation via Polars concat_str
         _job_update(job_id, progress=32, stage="Generating composite keys")
-        legacy_df[INTERNAL_KEY] = fast_generate_key(legacy_df, key_cols_list)
-        oracle_renamed[INTERNAL_KEY] = fast_generate_key(oracle_renamed, key_cols_list)
-
+        pl_legacy = pl_legacy.with_columns(_pl_gen_composite_key(key_cols_list).alias(INTERNAL_KEY))
+        pl_oracle = pl_oracle.with_columns(_pl_gen_composite_key(key_cols_list).alias(INTERNAL_KEY))
         _job_update(job_id, progress=35, stage="Keys generated — starting comparison")
         logger.info(f"[{job_id[:8]}] Normalisation complete")
 
-        # ── Stage 5: Detect numeric columns (Polars-native sampling) ────
+        # ── Stage 5: Numeric detection — Polars frames passed directly ───
         _job_update(job_id, progress=37, stage="Detecting column data types")
-        logger.info(f"[{job_id[:8]}] Converting to Polars for numeric detection...")
-        _pl_l_detect = pl.from_pandas(legacy_df[[INTERNAL_KEY] + cols_to_compare])
-        _pl_o_detect = pl.from_pandas(oracle_renamed[[INTERNAL_KEY] + cols_to_compare])
-        numeric_cols = _pl_detect_numeric_cols(_pl_l_detect, _pl_o_detect, cols_to_compare)
-        del _pl_l_detect, _pl_o_detect
-        gc.collect()
-        logger.info(f"[{job_id[:8]}] Numeric columns: {numeric_cols}")
+        numeric_cols = _pl_detect_numeric_cols(pl_legacy, pl_oracle, cols_to_compare)
+        logger.info(f"[{job_id[:8]}] Numeric columns detected: {numeric_cols}")
 
-        # ── Stage 5b: Key uniqueness — positional row numbering (prevents join explosion) ────
+        # ── Stage 5b: Duplicate key handling — Polars window function ────
         _job_update(job_id, progress=38, stage="Handling duplicate keys")
-        legacy_key_dupes = legacy_df[INTERNAL_KEY].duplicated().sum()
-        oracle_key_dupes = oracle_renamed[INTERNAL_KEY].duplicated().sum()
+        legacy_key_dupes = pl_legacy.select(pl.col(INTERNAL_KEY).is_duplicated().sum()).item()
+        oracle_key_dupes = pl_oracle.select(pl.col(INTERNAL_KEY).is_duplicated().sum()).item()
         logger.info(f"[{job_id[:8]}] Key duplicates — Legacy: {legacy_key_dupes:,}, Oracle: {oracle_key_dupes:,}")
 
-        # Instead of dropping duplicates (which loses data), add a positional
-        # row-number within each key group so that row 1 of key "A" in legacy
-        # matches row 1 of key "A" in oracle.  This keeps ALL rows and avoids
-        # cross-join explosion (100×100 → 100 instead of 10 000).
         if legacy_key_dupes > 0 or oracle_key_dupes > 0:
             logger.info(f"[{job_id[:8]}] Adding positional row number within each key group")
-            legacy_df["_rn"] = legacy_df.groupby(INTERNAL_KEY).cumcount().astype(str)
-            oracle_renamed["_rn"] = oracle_renamed.groupby(INTERNAL_KEY).cumcount().astype(str)
-            legacy_df[INTERNAL_KEY] = legacy_df[INTERNAL_KEY] + "|_rn=" + legacy_df["_rn"]
-            oracle_renamed[INTERNAL_KEY] = oracle_renamed[INTERNAL_KEY] + "|_rn=" + oracle_renamed["_rn"]
-            legacy_df.drop(columns=["_rn"], inplace=True)
-            oracle_renamed.drop(columns=["_rn"], inplace=True)
-            logger.info(f"[{job_id[:8]}] Positional keys assigned — Legacy: {len(legacy_df):,}, Oracle: {len(oracle_renamed):,}")
-            gc.collect()
+            pl_legacy = _pl_add_positional_key(pl_legacy, INTERNAL_KEY)
+            pl_oracle = _pl_add_positional_key(pl_oracle, INTERNAL_KEY)
+            logger.info(f"[{job_id[:8]}] Positional keys assigned")
 
-        # ── Stage 6: Polars comparison engine (40–60%) ────────────────
+        # ── Stage 6: Polars join (40–60%) — zero Pandas↔Polars conversion ─
         _job_update(job_id, progress=40, stage="Joining source & target (Polars)")
-        logger.info(f"[{job_id[:8]}] Converting legacy to Polars ({legacy_count:,} rows, {len(cols_to_compare)} cols)...")
-
-        try:
-            pl_legacy = pl.from_pandas(legacy_df[[INTERNAL_KEY] + cols_to_compare])
-            logger.info(f"[{job_id[:8]}] Legacy converted to Polars OK")
-        except Exception as conv_err:
-            logger.error(f"[{job_id[:8]}] Failed converting legacy to Polars: {conv_err}")
-            raise
-
-        try:
-            pl_oracle = pl.from_pandas(oracle_renamed[[INTERNAL_KEY] + cols_to_compare])
-            logger.info(f"[{job_id[:8]}] Oracle converted to Polars OK")
-        except Exception as conv_err:
-            logger.error(f"[{job_id[:8]}] Failed converting oracle to Polars: {conv_err}")
-            raise
-
-        # Free pandas DataFrames references for the comparison columns early
-        # (we still keep legacy_df and oracle_renamed for context columns/missing records later)
-        gc.collect()
-
         logger.info(f"[{job_id[:8]}] Starting inner join on '{INTERNAL_KEY}'...")
+
+        compare_cols_needed = [INTERNAL_KEY] + cols_to_compare
+        pl_l_cmp = pl_legacy.select([c for c in compare_cols_needed if c in pl_legacy.columns])
+        pl_o_cmp = pl_oracle.select([c for c in compare_cols_needed if c in pl_oracle.columns])
+
         try:
-            joined = pl_legacy.join(pl_oracle, on=INTERNAL_KEY, suffix="_T", how="inner")
+            joined = pl_l_cmp.join(pl_o_cmp, on=INTERNAL_KEY, suffix="_T", how="inner").rechunk()
         except Exception as join_err:
             logger.error(f"[{job_id[:8]}] Polars join failed: {join_err}")
             raise
-        del pl_legacy, pl_oracle
+        del pl_l_cmp, pl_o_cmp
         gc.collect()
 
         matched_count = len(joined)
@@ -10161,172 +10162,160 @@ def _run_validation_job(job_id: str, p: dict):
                     stage=f"Joined {matched_count:,} matched rows — comparing")
         logger.info(f"[{job_id[:8]}] Polars join: {matched_count:,} matched rows")
 
-        # Safety: abort if join exploded beyond expected size
+        # Safety guard: abort if join exploded (non-unique keys)
         max_expected = max(legacy_count, oracle_count) * 3
         if matched_count > max_expected:
-            logger.error(f"[{job_id[:8]}] JOIN EXPLOSION detected: {matched_count:,} rows "
-                         f"(expected max ~{max_expected:,}). Likely non-unique keys.")
             raise ValueError(
                 f"Join produced {matched_count:,} rows (source has {legacy_count:,}). "
                 f"Key columns may not be unique. Please verify key column selection."
             )
 
-        # Save matched keys for later anti-join (small memory footprint)
-        matched_keys_series = joined[INTERNAL_KEY].clone()
+        # Matched keys kept as a Polars frame — used for anti-join in Stage 9
+        matched_keys_pl = joined.select(INTERNAL_KEY).unique()
 
-        # Write full data CSV directly from Polars (avoids giant pandas intermediate later)
-        # Column order: all PS (_S) first, then all OC (_T), then Record Status
-        _job_update(job_id, progress=44, stage="Writing matched data to CSV")
-        logger.info(f"[{job_id[:8]}] Writing full matched data CSV...")
-        num_comparison_cols = len(cols_to_compare)
-        full_select = (
-            [pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{col}_S") for col in cols_to_compare]
-            + [pl.col(f"{col}_T").cast(pl.Utf8).fill_null("").alias(f"{col}_T") for col in cols_to_compare]
-            + [pl.lit("MATCHED").alias("Record Status")]
-        )
-        joined.select(full_select).write_csv(full_data_csv_path)
+        # Write full-data matched CSV only when the user requested it
+        if include_src_tgt:
+            _job_update(job_id, progress=44, stage="Writing matched data to CSV")
+            logger.info(f"[{job_id[:8]}] Writing full matched data CSV...")
+            full_select = (
+                [pl.col(c).cast(pl.Utf8).fill_null("").alias(f"{c}_S") for c in cols_to_compare]
+                + [pl.col(f"{c}_T").cast(pl.Utf8).fill_null("").alias(f"{c}_T") for c in cols_to_compare]
+                + [pl.lit("MATCHED").alias("Record Status")]
+            )
+            joined.select(full_select).write_csv(full_data_csv_path)
+            logger.info(f"[{job_id[:8]}] Matched CSV written")
         gc.collect()
-        logger.info(f"[{job_id[:8]}] Matched full data written to CSV")
 
-        # Build diff expressions — process in batches for memory safety
-        _job_update(job_id, progress=46, stage="Cleaning data for comparison")
-        logger.info(f"[{job_id[:8]}] Building cleaning expressions for {len(cols_to_compare)} columns...")
+        # ── Stage 6.2 / 7: Single-scan flag pass + mismatched-row extraction ──
+        # Pass 1: ONE scan of `joined` → boolean flags only (tiny output: ~100 MB for 1M rows).
+        # Pass 2: filter `joined` to mismatched rows only → per-column work is tiny.
+        # This replaces N independent scans (one per comparison column).
+        _job_update(job_id, progress=46, stage="Computing diff flags (single scan)")
+        _t_disc = time.perf_counter()
 
-        # Process cleaning + diff in batches to limit peak memory
-        BATCH_SIZE = 50  # columns per batch
-        col_batches = [cols_to_compare[i:i+BATCH_SIZE] for i in range(0, len(cols_to_compare), BATCH_SIZE)]
+        diff_flag_exprs = []
+        valid_compare_cols = []
+        for col in cols_to_compare:
+            o_col = f"{col}_T"
+            if o_col not in joined.columns:
+                continue
+            valid_compare_cols.append(col)
+            if col in numeric_cols:
+                cn = _pl_clean_num_expr(col)
+                co_expr = _pl_clean_num_expr(o_col)
+                flag = (
+                    (cn.is_not_null() & co_expr.is_not_null() & ((cn - co_expr).abs() > 0.0001))
+                    | (cn.is_null() ^ co_expr.is_null())
+                )
+            else:
+                cs = _pl_clean_str_expr(col, case_sensitive)
+                co_expr = _pl_clean_str_expr(o_col, case_sensitive)
+                flag = cs.fill_null("") != co_expr.fill_null("")
+            diff_flag_exprs.append(flag.alias(f"__diff_{col}"))
 
-        all_diff_results = {}  # col_name -> boolean Series
-        for batch_idx, col_batch in enumerate(col_batches):
-            logger.info(f"[{job_id[:8]}] Processing column batch {batch_idx+1}/{len(col_batches)} "
-                        f"({len(col_batch)} columns)")
+        # ONE scan: produce INTERNAL_KEY + N boolean flags — keeps memory flat
+        flags_df = joined.lazy().select(
+            [pl.col(INTERNAL_KEY)] + diff_flag_exprs
+        ).collect()
 
-            diff_exprs = []
-            for col in col_batch:
-                l_col = col
-                o_col = f"{col}_T"
-                if col in numeric_cols:
-                    diff_exprs.append(_pl_clean_num_expr(l_col).alias(f"__ln_{col}"))
-                    diff_exprs.append(_pl_clean_num_expr(o_col).alias(f"__on_{col}"))
-                else:
-                    diff_exprs.append(_pl_clean_str_expr(l_col, case_sensitive).alias(f"__ls_{col}"))
-                    diff_exprs.append(_pl_clean_str_expr(o_col, case_sensitive).alias(f"__os_{col}"))
-
-            batch_clean = joined.select([pl.col(INTERNAL_KEY)] + [pl.col(c) for c in col_batch]
-                                          + [pl.col(f"{c}_T") for c in col_batch]).with_columns(diff_exprs)
-
-            # Compute diff masks for this batch
-            for col in col_batch:
-                if col in numeric_cols:
-                    ln, on = f"__ln_{col}", f"__on_{col}"
-                    diff_series = (
-                        (batch_clean[ln].is_not_null() & batch_clean[on].is_not_null()
-                         & ((batch_clean[ln] - batch_clean[on]).abs() > 0.0001))
-                        | (batch_clean[ln].is_null() ^ batch_clean[on].is_null())
-                    )
-                else:
-                    ls, os_ = f"__ls_{col}", f"__os_{col}"
-                    diff_series = batch_clean[ls].fill_null("") != batch_clean[os_].fill_null("")
-                all_diff_results[col] = diff_series.sum()  # Just count, not full series
-
-            del batch_clean
-            gc.collect()
+        cols_with_diffs = [c for c in valid_compare_cols if flags_df[f"__diff_{c}"].any()]
+        logger.info(
+            f"[{job_id[:8]}] Flag scan: {time.perf_counter()-_t_disc:.2f}s — "
+            f"{len(cols_with_diffs)}/{len(valid_compare_cols)} cols differ"
+        )
 
         _job_update(job_id, progress=55, stage="Extracting discrepancies")
-        logger.info(f"[{job_id[:8]}] Column diff counts computed")
 
-        # ── Stage 7: Extract discrepancies (55–62%) ───────────────────
-        # all_diff_results has col -> count of diffs (from batched processing)
-        total_diff_count = sum(all_diff_results.values())
-        cols_with_diffs = [col for col, cnt in all_diff_results.items() if cnt > 0]
-        logger.info(f"[{job_id[:8]}] Total diff count: {total_diff_count:,}, "
-                    f"columns with diffs: {len(cols_with_diffs)}")
+        _EMPTY_DISC = {
+            INTERNAL_KEY: pl.Series([], dtype=pl.Utf8),
+            "Column Name": pl.Series([], dtype=pl.Utf8),
+            f"{src_label} Value": pl.Series([], dtype=pl.Utf8),
+            f"{tgt_label} Value": pl.Series([], dtype=pl.Utf8),
+        }
 
-        if total_diff_count > 0 and cols_with_diffs:
-            disc_parts = []
-            # Second pass: extract actual discrepancy rows only for columns with diffs
-            for col_idx, col in enumerate(cols_with_diffs):
-                col_label = f"{col} - {mappings_dict.get(col, col)}"
-                l_col = col
-                o_col = f"{col}_T"
+        if cols_with_diffs:
+            # Build "any diff" mask (OR across only the differing columns)
+            any_diff_expr = pl.col(f"__diff_{cols_with_diffs[0]}")
+            for _c in cols_with_diffs[1:]:
+                any_diff_expr = any_diff_expr | pl.col(f"__diff_{_c}")
+            any_diff_mask = flags_df.select(any_diff_expr.alias("_any"))["_any"]
 
-                # Rebuild clean + diff for just this one column (memory-safe)
-                if col in numeric_cols:
-                    col_clean = joined.select([
-                        pl.col(INTERNAL_KEY),
-                        pl.col(l_col),
-                        pl.col(o_col),
-                        _pl_clean_num_expr(l_col).alias("__cl"),
-                        _pl_clean_num_expr(o_col).alias("__co"),
-                    ])
-                    diff_mask = (
-                        (col_clean["__cl"].is_not_null() & col_clean["__co"].is_not_null()
-                         & ((col_clean["__cl"] - col_clean["__co"]).abs() > 0.0001))
-                        | (col_clean["__cl"].is_null() ^ col_clean["__co"].is_null())
-                    )
-                else:
-                    col_clean = joined.select([
-                        pl.col(INTERNAL_KEY),
-                        pl.col(l_col),
-                        pl.col(o_col),
-                        _pl_clean_str_expr(l_col, case_sensitive).alias("__cl"),
-                        _pl_clean_str_expr(o_col, case_sensitive).alias("__co"),
-                    ])
-                    diff_mask = col_clean["__cl"].fill_null("") != col_clean["__co"].fill_null("")
+            # Pass 2: filter joined to mismatched rows; select only needed value columns
+            needed_val_cols = (
+                [INTERNAL_KEY]
+                + [c for c in cols_with_diffs if c in joined.columns]
+                + [f"{c}_T" for c in cols_with_diffs if f"{c}_T" in joined.columns]
+            )
+            mismatched_vals = joined.filter(any_diff_mask).select(needed_val_cols)
 
-                filtered = col_clean.filter(diff_mask)
-                if len(filtered) > 0:
-                    part = filtered.select([
-                        pl.col(INTERNAL_KEY),
-                        pl.lit(col_label).alias("Column Name"),
-                        pl.col(l_col).cast(pl.Utf8).fill_null("").alias(f"{src_label} Value"),
-                        pl.col(o_col).cast(pl.Utf8).fill_null("").alias(f"{tgt_label} Value"),
-                    ])
-                    disc_parts.append(part)
-                del col_clean, filtered
-                gc.collect()
-
-            if disc_parts:
-                discrepancies_pl = pl.concat(disc_parts)
-                del disc_parts
-            else:
-                discrepancies_pl = pl.DataFrame({
-                    INTERNAL_KEY: [], "Column Name": [],
-                    f"{src_label} Value": [], f"{tgt_label} Value": []
-                })
-
-            # Add context columns
-            context_cols = list(dict.fromkeys(key_cols_list + included_cols_list))
-            valid_ctx = [c for c in context_cols if c in legacy_df.columns]
-            if valid_ctx:
-                ctx_pl = pl.from_pandas(
-                    legacy_df[[INTERNAL_KEY] + valid_ctx].drop_duplicates(subset=INTERNAL_KEY)
-                )
-                discrepancies_pl = discrepancies_pl.join(ctx_pl, on=INTERNAL_KEY, how="left")
-
-            total_discrepancies = len(discrepancies_pl)
-
-            # CSV export for very large discrepancy sets
-            if total_discrepancies > 1_000_000:
-                discrepancies_pl.drop(INTERNAL_KEY).write_csv(discrepancies_csv_path)
-
-            validation_df = discrepancies_pl.drop(INTERNAL_KEY).to_pandas()
-            del discrepancies_pl
+            # Attach per-column flags for mismatched rows (aligned by same mask)
+            flags_mismatch = flags_df.filter(any_diff_mask).select(
+                [f"__diff_{c}" for c in cols_with_diffs]
+            )
+            work = pl.concat([mismatched_vals, flags_mismatch], how="horizontal")
+            del mismatched_vals, flags_mismatch, flags_df, any_diff_mask
             gc.collect()
 
-            # Order columns
-            final_report_cols = key_cols_list + [c for c in included_cols_list if c not in key_cols_list] + ["Column Name", f"{src_label} Value", f"{tgt_label} Value"]
+            # Per-column filter on `work` — fast, work is only mismatched rows
+            disc_parts = []
+            for col in cols_with_diffs:
+                col_label = f"{col} - {mappings_dict.get(col, col)}"
+                part = work.filter(pl.col(f"__diff_{col}")).select([
+                    pl.col(INTERNAL_KEY),
+                    pl.lit(col_label).alias("Column Name"),
+                    pl.col(col).cast(pl.Utf8).fill_null("").alias(f"{src_label} Value"),
+                    pl.col(f"{col}_T").cast(pl.Utf8).fill_null("").alias(f"{tgt_label} Value"),
+                ])
+                if len(part) > 0:
+                    disc_parts.append(part)
+            del work
+
+            discrepancies_pl = pl.concat(disc_parts) if disc_parts else pl.DataFrame(_EMPTY_DISC)
+            del disc_parts
+        else:
+            del flags_df
+            discrepancies_pl = pl.DataFrame(_EMPTY_DISC)
+        gc.collect()
+
+        # Context columns: joined from pl_legacy (no pandas conversion)
+        context_cols_order = list(dict.fromkeys(key_cols_list + included_cols_list))
+        valid_ctx = [c for c in context_cols_order if c in pl_legacy.columns and c != INTERNAL_KEY]
+        if valid_ctx:
+            ctx_pl = pl_legacy.select([INTERNAL_KEY] + valid_ctx).unique(subset=[INTERNAL_KEY])
+            discrepancies_pl = discrepancies_pl.join(ctx_pl, on=INTERNAL_KEY, how="left")
+
+        total_discrepancies = len(discrepancies_pl)
+
+        # Always write CSV for large result sets (full fidelity)
+        _EXCEL_ROW_CAP = 100_000
+        if total_discrepancies > _EXCEL_ROW_CAP:
+            discrepancies_pl.drop(INTERNAL_KEY).write_csv(discrepancies_csv_path)
+            logger.info(f"[{job_id[:8]}] Discrepancy CSV written ({total_discrepancies:,} rows)")
+
+        if total_discrepancies > 0:
+            # Cap rows written to Excel — full data is in the CSV
+            disc_for_excel = (
+                discrepancies_pl.head(_EXCEL_ROW_CAP) if total_discrepancies > _EXCEL_ROW_CAP
+                else discrepancies_pl
+            )
+            validation_df = disc_for_excel.drop(INTERNAL_KEY).to_pandas()
+            del discrepancies_pl, disc_for_excel
+            gc.collect()
+
+            final_report_cols = (
+                key_cols_list
+                + [c for c in included_cols_list if c not in key_cols_list]
+                + ["Column Name", f"{src_label} Value", f"{tgt_label} Value"]
+            )
             final_report_cols = [c for c in final_report_cols if c in validation_df.columns]
             validation_df = validation_df[final_report_cols]
         else:
-            total_discrepancies = 0
+            del discrepancies_pl
             validation_df = pd.DataFrame([{"Status": "All mapped columns matched perfectly"}])
 
-        _job_update(job_id, progress=62,
-                    stage=f"Found {total_discrepancies:,} discrepancies")
+        _job_update(job_id, progress=62, stage=f"Found {total_discrepancies:,} discrepancies")
         logger.info(f"[{job_id[:8]}] Total discrepancies: {total_discrepancies:,}")
 
-        # Sort discrepancies
         if "Column Name" in validation_df.columns and not validation_df.empty:
             sort_cols = ["Column Name"] + [c for c in key_cols_list if c in validation_df.columns]
             validation_df = validation_df.sort_values(by=sort_cols, kind="mergesort").reset_index(drop=True)
@@ -10342,78 +10331,64 @@ def _run_validation_job(job_id: str, p: dict):
             for col_name, count in col_counts.items():
                 column_discrepancy_counts.append(["", col_name, int(count), "", "", ""])
 
-        # ── Stage 9: Missing Records (Polars ANTI JOIN) ───────────────
+        # ── Stage 9: Missing Records — Polars anti-join on existing frames ─
         _job_update(job_id, progress=64, stage="Finding missing records")
 
-        pl_legacy_keys = pl.from_pandas(legacy_df[[INTERNAL_KEY]])
-        pl_oracle_keys = pl.from_pandas(oracle_renamed[[INTERNAL_KEY]])
-        pl_matched_keys = pl.DataFrame({INTERNAL_KEY: matched_keys_series})
+        # Anti-join directly against matched_keys_pl — no pandas.isin() needed
+        legacy_only_pl = pl_legacy.join(matched_keys_pl, on=INTERNAL_KEY, how="anti")
+        oracle_only_pl = pl_oracle.join(matched_keys_pl, on=INTERNAL_KEY, how="anti")
 
-        legacy_missing_keys = pl_legacy_keys.join(pl_matched_keys, on=INTERNAL_KEY, how="anti")
-        oracle_missing_keys = pl_oracle_keys.join(pl_matched_keys, on=INTERNAL_KEY, how="anti")
-
-        legacy_missing_set = set(legacy_missing_keys[INTERNAL_KEY].to_list())
-        oracle_missing_set = set(oracle_missing_keys[INTERNAL_KEY].to_list())
-
-        legacy_only_df = legacy_df[legacy_df[INTERNAL_KEY].isin(legacy_missing_set)].copy()
-        oracle_only_df = oracle_renamed[oracle_renamed[INTERNAL_KEY].isin(oracle_missing_set)].copy()
-
-        if INTERNAL_KEY in legacy_only_df.columns:
-            legacy_only_df.drop(columns=[INTERNAL_KEY], inplace=True)
-        if INTERNAL_KEY in oracle_only_df.columns:
-            oracle_only_df.drop(columns=[INTERNAL_KEY], inplace=True)
-
-        count_missing_oracle = len(legacy_only_df)
-        count_missing_ps = len(oracle_only_df)
-
+        count_missing_oracle = len(legacy_only_pl)
+        count_missing_ps = len(oracle_only_pl)
         _job_update(job_id, progress=68,
                     stage=f"Missing: {count_missing_oracle:,} in {tgt_label}, {count_missing_ps:,} in {src_label}")
 
-        # CSV export for large missing sets
-        if count_missing_oracle > 1_000_000:
-            legacy_only_df.to_csv(missing_oracle_csv_path, index=False)
-        if count_missing_ps > 1_000_000:
-            oracle_only_df.to_csv(missing_ps_csv_path, index=False)
+        # Write CSV for large missing sets; cap Excel to _EXCEL_ROW_CAP rows
+        if count_missing_oracle > _EXCEL_ROW_CAP:
+            legacy_only_pl.drop(INTERNAL_KEY).write_csv(missing_oracle_csv_path)
+        if count_missing_ps > _EXCEL_ROW_CAP:
+            oracle_only_pl.drop(INTERNAL_KEY).write_csv(missing_ps_csv_path)
 
+        # Convert missing DFs to pandas — capped for Excel
+        legacy_for_excel = (
+            legacy_only_pl.head(_EXCEL_ROW_CAP) if count_missing_oracle > _EXCEL_ROW_CAP
+            else legacy_only_pl
+        )
+        oracle_for_excel = (
+            oracle_only_pl.head(_EXCEL_ROW_CAP) if count_missing_ps > _EXCEL_ROW_CAP
+            else oracle_only_pl
+        )
+        legacy_only_df = legacy_for_excel.drop(INTERNAL_KEY).to_pandas()
+        oracle_only_df = oracle_for_excel.drop(INTERNAL_KEY).to_pandas()
+        del legacy_for_excel, oracle_for_excel
         for col in comment_cols:
             legacy_only_df[col] = ""
             oracle_only_df[col] = ""
 
-        # ── Stage 10: Full Data Report (78%) ──────────────────────────
+        # ── Stage 10: Full Data CSV — Polars append for missing rows ─────
         _job_update(job_id, progress=78, stage="Appending missing records to full data CSV")
 
-        # CSV header order (matched data already written from Polars earlier)
-        full_csv_header_cols = [f"{c}_S" for c in cols_to_compare] + [f"{c}_T" for c in cols_to_compare] + ["Record Status"]
+        if include_src_tgt and os.path.exists(full_data_csv_path):
+            # Append missing rows by opening the existing file in binary-append mode.
+            # Polars write_csv accepts IO[bytes] so this avoids any intermediate pandas copy.
+            if count_missing_oracle > 0:
+                l_s = [(pl.col(c).cast(pl.Utf8).fill_null("") if c in legacy_only_pl.columns else pl.lit("")).alias(f"{c}_S")
+                       for c in cols_to_compare]
+                l_t = [pl.lit("").alias(f"{c}_T") for c in cols_to_compare]
+                with open(full_data_csv_path, "ab") as _f:
+                    legacy_only_pl.select(
+                        l_s + l_t + [pl.lit("MISSING_IN_TARGET").alias("Record Status")]
+                    ).write_csv(_f, include_header=False)
+            if count_missing_ps > 0:
+                o_s = [pl.lit("").alias(f"{c}_S") for c in cols_to_compare]
+                o_t = [(pl.col(c).cast(pl.Utf8).fill_null("") if c in oracle_only_pl.columns else pl.lit("")).alias(f"{c}_T")
+                       for c in cols_to_compare]
+                with open(full_data_csv_path, "ab") as _f:
+                    oracle_only_pl.select(
+                        o_s + o_t + [pl.lit("MISSING_IN_SOURCE").alias("Record Status")]
+                    ).write_csv(_f, include_header=False)
 
-        # Append missing-in-target rows to CSV
-        if count_missing_oracle > 0:
-            l_rename = {c: f"{c}_S" for c in cols_to_compare if c in legacy_only_df.columns}
-            ps_missing_df = legacy_only_df.rename(columns=l_rename)
-            for c in cols_to_compare:
-                if f"{c}_S" not in ps_missing_df.columns:
-                    ps_missing_df[f"{c}_S"] = ""
-                ps_missing_df[f"{c}_T"] = ""
-            ps_missing_df["Record Status"] = "MISSING_IN_TARGET"
-            ps_missing_df = ps_missing_df.reindex(columns=full_csv_header_cols, fill_value="")
-            ps_missing_df.to_csv(full_data_csv_path, mode='a', header=False, index=False)
-            del ps_missing_df
-
-        # Append missing-in-source rows to CSV
-        if count_missing_ps > 0:
-            o_rename = {c: f"{c}_T" for c in cols_to_compare if c in oracle_only_df.columns}
-            oc_missing_csv_df = oracle_only_df.rename(columns=o_rename)
-            for c in cols_to_compare:
-                oc_missing_csv_df[f"{c}_S"] = ""
-                if f"{c}_T" not in oc_missing_csv_df.columns:
-                    oc_missing_csv_df[f"{c}_T"] = ""
-            oc_missing_csv_df["Record Status"] = "MISSING_IN_SOURCE"
-            oc_missing_csv_df = oc_missing_csv_df.reindex(columns=full_csv_header_cols, fill_value="")
-            oc_missing_csv_df.to_csv(full_data_csv_path, mode='a', header=False, index=False)
-            del oc_missing_csv_df
-
-        include_src_tgt = p.get("includeSourceTargetFiles", False)
-
-        # Lazy-load full data from CSV only when needed for Excel (with row cap)
+        # Lazy-load full data CSV for Excel (row-capped to EXCEL_MAX_ROWS)
         full_data_for_excel = None
         if include_src_tgt and os.path.exists(full_data_csv_path):
             try:
@@ -10421,9 +10396,8 @@ def _run_validation_job(job_id: str, p: dict):
             except Exception as csv_err:
                 logger.warning(f"[{job_id[:8]}] Could not reload full data CSV for Excel: {csv_err}")
 
-        # Free large Polars/pandas objects
-        del joined, legacy_df, oracle_renamed
-        del matched_keys_series
+        # Free all large Polars frames — pandas results are now held in small DFs
+        del joined, pl_legacy, pl_oracle, matched_keys_pl, legacy_only_pl, oracle_only_pl
         gc.collect()
         logger.info(f"[{job_id[:8]}] Polars processing done in {time.time() - start_time:.2f}s")
 
@@ -10455,9 +10429,10 @@ def _run_validation_job(job_id: str, p: dict):
         # ── Stage 14: Write Styled Excel (85–95%) ─────────────────────
         _job_update(job_id, progress=85, stage="Writing styled Excel report")
 
-        font_white = Font(name="Calibri", size=9, color="FFFFFF", bold=True)
-        font_black = Font(name="Calibri", size=9, color="000000", bold=True)
-        font_bold_black = Font(name="Calibri", size=9, bold=True)
+        font_white = Font(name="Calibri", size=8, color="FFFFFF", bold=True)
+        font_black = Font(name="Calibri", size=8, color="000000", bold=True)
+        font_bold_black = Font(name="Calibri", size=8, bold=True)
+        font_normal = Font(name="Calibri", size=8)
         fill_header_ps = PatternFill("solid", fgColor="1F497D")
         fill_header_oc = PatternFill("solid", fgColor="31869B")
         fill_header_err = PatternFill("solid", fgColor="C0504D")
@@ -10486,6 +10461,10 @@ def _run_validation_job(job_id: str, p: dict):
                 if cell.value in comment_cols:
                     cell.fill, cell.font = fill_orange, font_black
                     comment_idxs.append(cell.column)
+            body_cap = min(ws.max_row, 500)
+            for body_row in ws.iter_rows(min_row=2, max_row=body_cap):
+                for cell in body_row:
+                    cell.font = font_normal
             for col in ws.iter_cols(max_row=min(50, ws.max_row)):
                 ml = max((len(str(c.value)) if c.value else 0) for c in col)
                 ws.column_dimensions[get_column_letter(col[0].column)].width = min(max((ml + 2) * 1.2, 10), 60)
@@ -10503,8 +10482,9 @@ def _run_validation_job(job_id: str, p: dict):
             for cell in ws[1]:
                 cell.fill, cell.font = fill_green, font_white
                 cell.alignment, cell.border = align_center, border_thin
-            for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            for row in ws.iter_rows(min_row=2, max_row=min(ws.max_row, 200)):
                 for cell in row:
+                    cell.font = font_normal
                     cell.border = border_thin
                     if str(cell.value).strip().lower() in {"yes", "no"}:
                         cell.alignment = align_center
@@ -10537,77 +10517,91 @@ def _run_validation_job(job_id: str, p: dict):
 
         sheet_full_data = _safe_sheet_name(f"{src_label} - {tgt_label} Data", max_len=28)
 
-        with pd.ExcelWriter(main_output_path, engine="openpyxl") as writer:
+        # ── Phase 1: fast data write with xlsxwriter (streaming, ~10x faster than openpyxl) ─
+        _job_update(job_id, progress=88, stage="Writing Excel data (xlsxwriter)")
+        _t_xls = time.perf_counter()
+        _xls_buf = BytesIO()
+        with pd.ExcelWriter(_xls_buf, engine="xlsxwriter") as writer:
             summary_df.to_excel(writer, index=False, header=False, sheet_name="Summary")
             config_df.to_excel(writer, index=False, sheet_name="Configuration")
             oracle_only_df.to_excel(writer, index=False, sheet_name=sheet_missing_ps)
             legacy_only_df.to_excel(writer, index=False, sheet_name=sheet_missing_oc)
             write_df_excel_paginated(writer, validation_df, sheet_discrepancies)
-
-            # Optionally include full data in the main workbook
             if include_src_tgt and full_data_for_excel is not None and not full_data_for_excel.empty:
                 write_df_excel_paginated(writer, full_data_for_excel, sheet_full_data)
+        _xls_buf.seek(0)
+        logger.info(f"[{job_id[:8]}] xlsxwriter data write: {time.perf_counter()-_t_xls:.2f}s")
 
-            wb = writer.book
-            _style_header(wb, sheet_missing_ps, fill_header_ps)
-            _style_header(wb, sheet_missing_oc, fill_header_oc)
+        # ── Phase 2: open with openpyxl just for styling ──────────────────
+        _job_update(job_id, progress=92, stage="Styling Excel sheets (openpyxl)")
+        _t_style = time.perf_counter()
+        wb = openpyxl.load_workbook(_xls_buf)
+        del _xls_buf
+
+        _style_header(wb, sheet_missing_ps, fill_header_ps)
+        _style_header(wb, sheet_missing_oc, fill_header_oc)
+        for sn in wb.sheetnames:
+            if sn.startswith(sheet_discrepancies):
+                _style_header(wb, sn, fill_header_err)
+        _style_config(wb)
+        wb["Configuration"].sheet_state = "hidden"
+
+        if include_src_tgt:
             for sn in wb.sheetnames:
-                if sn.startswith(sheet_discrepancies):
-                    _style_header(wb, sn, fill_header_err)
-            _style_config(wb)
-            wb["Configuration"].sheet_state = "hidden"
+                if sn.startswith(sheet_full_data):
+                    _style_full_data_header(wb[sn], num_comparison_cols)
 
-            # Style full data sheets inside main workbook (if included)
-            if include_src_tgt:
-                for sn in wb.sheetnames:
-                    if sn.startswith(sheet_full_data):
-                        _style_full_data_header(wb[sn], num_comparison_cols)
+        # Summary styling
+        ws_sum = wb["Summary"]
+        ws_sum.sheet_view.showGridLines = False
+        ws_sum.column_dimensions["A"].width = 2
+        ws_sum.column_dimensions["B"].width = 45
+        for ch in ("C", "D", "E", "F"):
+            ws_sum.column_dimensions[ch].width = 25
 
-            # Summary styling
-            ws_sum = wb["Summary"]
-            ws_sum.sheet_view.showGridLines = False
-            ws_sum.column_dimensions["A"].width = 2
-            ws_sum.column_dimensions["B"].width = 45
-            for ch in ("C", "D", "E", "F"):
-                ws_sum.column_dimensions[ch].width = 25
+        for row in ws_sum.iter_rows(min_row=1, max_row=ws_sum.max_row):
+            if len(row) < 3:
+                continue
+            for cell in row:
+                cell.font = font_normal
+            cell_b = row[1]
+            if not cell_b.value:
+                continue
+            cell_b.border = border_thin
+            row[2].border = border_thin
+            cc = [ws_sum.cell(row=cell_b.row, column=c) for c in (4, 5, 6)]
 
-            for row in ws_sum.iter_rows(min_row=1, max_row=ws_sum.max_row):
-                if len(row) < 3:
-                    continue
-                cell_b = row[1]
-                if not cell_b.value:
-                    continue
-                cell_b.border = border_thin
-                row[2].border = border_thin
-                cc = [ws_sum.cell(row=cell_b.row, column=c) for c in (4, 5, 6)]
-
-                if cell_b.value in ("Missing Records Summary", "Data Discrepancies Summary"):
+            if cell_b.value in ("Missing Records Summary", "Data Discrepancies Summary"):
+                ws_sum.merge_cells(start_row=cell_b.row, start_column=2,
+                                   end_row=cell_b.row, end_column=3)
+                cell_b.fill, cell_b.font = fill_green, font_white
+                cell_b.alignment = align_center
+                ws_sum.row_dimensions[cell_b.row].height = 20
+                for c in cc:
+                    c.fill, c.font = fill_orange, font_black
+                    c.alignment, c.border = align_center, border_thin
+            elif "Total" in str(cell_b.value) or "Comparison Statistics" in str(cell_b.value):
+                if "Comparison Statistics" in str(cell_b.value):
                     ws_sum.merge_cells(start_row=cell_b.row, start_column=2,
                                        end_row=cell_b.row, end_column=3)
-                    cell_b.fill, cell_b.font = fill_green, font_white
                     cell_b.alignment = align_center
                     ws_sum.row_dimensions[cell_b.row].height = 20
-                    for c in cc:
-                        c.fill, c.font = fill_orange, font_black
-                        c.alignment, c.border = align_center, border_thin
-                elif "Total" in str(cell_b.value) or "Comparison Statistics" in str(cell_b.value):
-                    if "Comparison Statistics" in str(cell_b.value):
-                        ws_sum.merge_cells(start_row=cell_b.row, start_column=2,
-                                           end_row=cell_b.row, end_column=3)
-                        cell_b.alignment = align_center
-                        ws_sum.row_dimensions[cell_b.row].height = 20
-                        cell_b.fill, cell_b.font = fill_green, font_white
-                    else:
-                        cell_b.fill = fill_grey
-                        row[2].fill = fill_grey
-                        cell_b.font = font_bold_black
-                        row[2].font = font_bold_black
-                        row[2].alignment = align_center
-                else:
                     cell_b.fill, cell_b.font = fill_green, font_white
+                else:
+                    cell_b.fill = fill_grey
+                    row[2].fill = fill_grey
+                    cell_b.font = font_bold_black
+                    row[2].font = font_bold_black
                     row[2].alignment = align_center
-                    for c in cc:
-                        c.border = border_thin
+            else:
+                cell_b.fill, cell_b.font = fill_green, font_white
+                row[2].alignment = align_center
+                for c in cc:
+                    c.border = border_thin
+
+        wb.save(main_output_path)
+        logger.info(f"[{job_id[:8]}] openpyxl styling + save: {time.perf_counter()-_t_style:.2f}s")
+        del wb
 
         # ── Stage 14b: Cleanup auxiliary data ──────────────────────────
         if full_data_for_excel is not None:
