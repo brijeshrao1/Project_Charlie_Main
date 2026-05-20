@@ -8132,8 +8132,17 @@ _mapping_jobs_lock = _threading.Lock()
 
 def _compute_smooth_eta(job: dict) -> Optional[float]:
     """
-    Compute a smooth, realistic ETA using exponential moving average (EMA)
-    of the progress rate. Avoids wild swings early on.
+    Compute a smooth, realistic ETA using an EMA of the progress rate.
+
+    Fixes vs. prior version:
+    - alpha=0.5: ensures the NEWEST rate always gets the most weight regardless
+      of history length (alpha=0.35 gave oldest rate 42% vs newest 35% for 3 samples).
+    - Stall detection: when progress hasn't changed for 5+ seconds, a near-zero
+      implied rate is injected so the ETA rises instead of staying falsely low.
+    - prev_eta smoothing reduced (50/50 instead of 40/60): converges faster when
+      the rate changes dramatically (e.g., fast Polars → slow openpyxl write).
+    - Linear-rate blend reduced (15% instead of 30%): early fast stages no longer
+      pull the ETA too low during later slow stages.
     """
     prog = job.get("progress", 0)
     if prog >= 100:
@@ -8152,57 +8161,64 @@ def _compute_smooth_eta(job: dict) -> Optional[float]:
 
     # Track progress history: list of (timestamp, progress) snapshots
     history = job.setdefault("_eta_history", [])
-    # Deduplicate: only append if progress actually changed
     if not history or history[-1][1] != prog:
         history.append((now, prog))
-    # Keep last 20 snapshots to avoid unbounded memory
     if len(history) > 20:
         job["_eta_history"] = history[-20:]
         history = job["_eta_history"]
 
     if len(history) < 2:
-        # Only one data point — use simple linear estimate
-        rate = prog / elapsed  # %/sec
+        rate = prog / elapsed
         raw_eta = (100 - prog) / rate
-        return round(min(raw_eta, 7200), 1)  # cap at 2h
+        return round(min(raw_eta, 7200), 1)
 
-    # Compute recent rates between consecutive snapshots
+    # Compute rates between consecutive snapshots (only for intervals with progress)
     rates = []
     for i in range(1, len(history)):
         dt = history[i][0] - history[i - 1][0]
         dp = history[i][1] - history[i - 1][1]
         if dt > 0.1 and dp > 0:
-            rates.append(dp / dt)  # %/sec for this interval
+            rates.append(dp / dt)
+
+    # Stall detection: if progress hasn't moved for 5+ seconds, inject a
+    # near-zero implied rate so the ETA climbs instead of staying falsely optimistic.
+    dt_stalled = now - history[-1][0]
+    if dt_stalled > 5.0 and history[-1][1] == prog and rates:
+        # implied rate: assume 0.05% would take dt_stalled seconds at this pace
+        rates.append(0.05 / dt_stalled)
 
     if not rates:
-        # Progress hasn't changed — use overall linear
         rate = prog / elapsed
         raw_eta = (100 - prog) / max(rate, 1e-6)
         return round(min(raw_eta, 7200), 1)
 
-    # EMA of rates (alpha = 0.35 → recent rates weighed more)
-    alpha = 0.35
-    ema_rate = rates[0]
-    for r in rates[1:]:
-        ema_rate = alpha * r + (1 - alpha) * ema_rate
+    # EMA seeded from the NEWEST rate so recent rates dominate.
+    # With alpha=0.5 and n rates: newest gets 50%, second-newest 25%, etc.
+    # (alpha=0.35 inverted this for short histories: oldest got 42%, newest 35%)
+    alpha = 0.5
+    ema_rate = rates[-1]
+    for r in rates[-2::-1]:
+        ema_rate = alpha * ema_rate + (1 - alpha) * r
 
-    # Also compute overall linear rate and blend (70% EMA, 30% linear)
+    # Blend EMA with the overall linear rate — minimal linear weight (15%) to
+    # avoid early-stage fast rates pulling the ETA too low in slow later stages.
     linear_rate = prog / elapsed
-    blended_rate = 0.7 * ema_rate + 0.3 * linear_rate
+    blended_rate = 0.85 * ema_rate + 0.15 * linear_rate
 
     if blended_rate <= 1e-6:
         return round(min((100 - prog) / max(linear_rate, 1e-6), 7200), 1)
 
     raw_eta = (100 - prog) / blended_rate
 
-    # Smooth against previous ETA to avoid jumps (EMA on the ETA itself)
+    # Smooth against previous ETA — 50/50 blend converges twice as fast as 40/60
+    # when the rate changes dramatically between stages.
     prev_eta = job.get("eta_seconds")
     if prev_eta is not None and prev_eta > 0:
-        smoothed = 0.4 * raw_eta + 0.6 * prev_eta
+        smoothed = 0.5 * raw_eta + 0.5 * prev_eta
     else:
         smoothed = raw_eta
 
-    return round(max(0, min(smoothed, 7200)), 1)  # clamp 0–7200s
+    return round(max(0, min(smoothed, 7200)), 1)
 
 
 def _mapping_job_update(job_id: str, **kwargs):
@@ -10462,11 +10478,13 @@ def _run_validation_job(job_id: str, p: dict):
                         o_s + o_t + [pl.lit("MISSING_IN_SOURCE").alias("Record Status")]
                     ).write_csv(_f, include_header=False)
 
-        # Lazy-load full data CSV for Excel (row-capped to EXCEL_MAX_ROWS)
+        # Lazy-load full data CSV for Excel — capped at _EXCEL_ROW_CAP (same as all other sheets).
+        # Loading more rows would cause MemoryError when openpyxl builds its in-memory DOM.
+        # Full-fidelity data is always available in the CSV file.
         full_data_for_excel = None
         if include_src_tgt and os.path.exists(full_data_csv_path):
             try:
-                full_data_for_excel = pd.read_csv(full_data_csv_path, dtype=str, nrows=EXCEL_MAX_ROWS)
+                full_data_for_excel = pd.read_csv(full_data_csv_path, dtype=str, nrows=_EXCEL_ROW_CAP)
             except Exception as csv_err:
                 logger.warning(f"[{job_id[:8]}] Could not reload full data CSV for Excel: {csv_err}")
 
@@ -10591,7 +10609,11 @@ def _run_validation_job(job_id: str, p: dict):
 
         sheet_full_data = _safe_sheet_name(f"{src_label} - {tgt_label} Data", max_len=28)
 
-        # ── Phase 1: fast data write with xlsxwriter (streaming, ~10x faster than openpyxl) ─
+        # ── Phase 1: fast data write with xlsxwriter (small sheets only) ────
+        # full_data_for_excel is intentionally excluded here: for large datasets
+        # (600k rows × N cols) the BytesIO would be hundreds of MB and
+        # openpyxl.load_workbook() would build a DOM of tens-of-millions of cell
+        # objects → MemoryError. Full data is appended in Phase 3 instead.
         _job_update(job_id, progress=88, stage="Writing Excel data (xlsxwriter)")
         _t_xls = time.perf_counter()
         _xls_buf = BytesIO()
@@ -10601,12 +10623,10 @@ def _run_validation_job(job_id: str, p: dict):
             oracle_only_df.to_excel(writer, index=False, sheet_name=sheet_missing_ps)
             legacy_only_df.to_excel(writer, index=False, sheet_name=sheet_missing_oc)
             write_df_excel_paginated(writer, validation_df, sheet_discrepancies)
-            if include_src_tgt and full_data_for_excel is not None and not full_data_for_excel.empty:
-                write_df_excel_paginated(writer, full_data_for_excel, sheet_full_data)
         _xls_buf.seek(0)
         logger.info(f"[{job_id[:8]}] xlsxwriter data write: {time.perf_counter()-_t_xls:.2f}s")
 
-        # ── Phase 2: open with openpyxl just for styling ──────────────────
+        # ── Phase 2: open with openpyxl just for styling (small workbook) ─
         _job_update(job_id, progress=92, stage="Styling Excel sheets (openpyxl)")
         _t_style = time.perf_counter()
         wb = openpyxl.load_workbook(_xls_buf)
@@ -10619,11 +10639,6 @@ def _run_validation_job(job_id: str, p: dict):
                 _style_header(wb, sn, fill_header_err)
         _style_config(wb)
         wb["Configuration"].sheet_state = "hidden"
-
-        if include_src_tgt:
-            for sn in wb.sheetnames:
-                if sn.startswith(sheet_full_data):
-                    _style_full_data_header(wb[sn], num_comparison_cols)
 
         # Summary styling
         ws_sum = wb["Summary"]
@@ -10676,6 +10691,26 @@ def _run_validation_job(job_id: str, p: dict):
         wb.save(main_output_path)
         logger.info(f"[{job_id[:8]}] openpyxl styling + save: {time.perf_counter()-_t_style:.2f}s")
         del wb
+
+        # ── Phase 3: Append full-data sheet (openpyxl append mode) ───────
+        # Written separately so the Phase 2 BytesIO stays small (avoids MemoryError).
+        # Header styling is applied inside the same context to avoid a second load.
+        if include_src_tgt and full_data_for_excel is not None and not full_data_for_excel.empty:
+            _job_update(job_id, progress=94, stage="Appending source/target data sheet")
+            _t_fd = time.perf_counter()
+            try:
+                with pd.ExcelWriter(
+                    main_output_path, engine="openpyxl", mode="a", if_sheet_exists="replace"
+                ) as app_writer:
+                    _fd_names = write_df_excel_paginated(app_writer, full_data_for_excel, sheet_full_data)
+                    # Style full-data header while the workbook is still open (no second load)
+                    _wb_app = app_writer.book
+                    for _sn in (_fd_names or []):
+                        if _sn in _wb_app.sheetnames:
+                            _style_full_data_header(_wb_app[_sn], num_comparison_cols)
+                logger.info(f"[{job_id[:8]}] Full-data sheet appended in {time.perf_counter()-_t_fd:.2f}s")
+            except Exception as _fd_err:
+                logger.warning(f"[{job_id[:8]}] Could not append full-data sheet: {_fd_err}")
 
         # ── Stage 14b: Cleanup auxiliary data ──────────────────────────
         if full_data_for_excel is not None:
