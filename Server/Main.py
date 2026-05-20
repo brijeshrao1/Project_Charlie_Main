@@ -8379,18 +8379,18 @@ def _polars_read_file(file_path: str, sheet_name=None):
             except ValueError:
                 sheet_name_param = stripped
 
+    # calamine (Rust) only — xlsx2csv intentionally removed: it's 10-100x slower on
+    # large files and will hang for 10+ minutes on 60 MB workbooks.
     df = None
-    for engine in ("calamine", "xlsx2csv"):
-        try:
-            kw = {"engine": engine}
-            if sheet_id_param is not None:
-                kw["sheet_id"] = sheet_id_param
-            elif sheet_name_param is not None:
-                kw["sheet_name"] = sheet_name_param
-            df = pl.read_excel(file_path, **kw)
-            break
-        except Exception:
-            continue
+    try:
+        kw: dict = {"engine": "calamine"}
+        if sheet_id_param is not None:
+            kw["sheet_id"] = sheet_id_param
+        elif sheet_name_param is not None:
+            kw["sheet_name"] = sheet_name_param
+        df = pl.read_excel(file_path, **kw)
+    except Exception as _cal_err:
+        logger.warning(f"calamine failed ({type(_cal_err).__name__}: {_cal_err}), falling back to openpyxl")
 
     if df is None:
         sp = 0
@@ -8401,7 +8401,10 @@ def _polars_read_file(file_path: str, sheet_name=None):
         pdf = pd.read_excel(file_path, sheet_name=sp, dtype=str, engine="openpyxl")
         df = pl.from_pandas(pdf)
 
-    df = df.cast({c: pl.Utf8 for c in df.columns})
+    # Only cast non-Utf8 columns (calamine emits Int64/Float64 for numeric cells)
+    _non_utf8 = {c: pl.Utf8 for c in df.columns if df.schema[c] != pl.Utf8}
+    if _non_utf8:
+        df = df.cast(_non_utf8)
     renames = {c: c.strip() for c in df.columns if c != c.strip()}
     if renames:
         df = df.rename(renames)
@@ -8469,64 +8472,85 @@ def _pl_is_date_like_column(df, col_name, sample_size=50):
 
 
 def _pl_apply_date_normalization(df, date_cols, all_cols, auto_detect=False, compare_cols=None):
-    """Apply date normalization on an eager Polars DataFrame.
-    Auto-detects format per column via sampling, then applies single-format parse.
-    If auto_detect=True, also scans compare_cols for date-like columns.
+    """Apply date normalization on an eager Polars DataFrame — batched, single pass.
+
+    vs. prior version:
+    - ONE head(50) across all candidate columns instead of N individual head() calls
+    - ONE head(50) across all date columns for format sampling instead of N per-column calls
+    - ONE with_columns(date_exprs) for all date columns instead of N separate materializations
+    - Polars-native str.to_date() fallback instead of pandas/dateutil round-trip
     """
     import polars as pl
+    _SENTINELS = {'', 'nan', 'None', 'NaN', 'NaT'}
 
-    # Auto-detect date columns if requested
     actual_date_cols = set(date_cols) if date_cols else set()
+
+    # Auto-detect: ONE head(50) for all candidate columns — replaces N individual head() calls
     if auto_detect and compare_cols:
-        for col in compare_cols:
-            if col not in actual_date_cols and col in df.columns:
-                if _pl_is_date_like_column(df, col):
+        candidate_cols = [c for c in compare_cols if c not in actual_date_cols and c in df.columns]
+        if candidate_cols:
+            sample_df = df.select(
+                [pl.col(c).cast(pl.Utf8).fill_null("") for c in candidate_cols]
+            ).head(50)
+            for col in candidate_cols:
+                vals = [v.strip() for v in sample_df[col].to_list() if v.strip() not in _SENTINELS]
+                if vals and sum(1 for v in vals if _DATE_LIKE_RE.match(v)) >= max(len(vals) * 0.6, 1):
                     actual_date_cols.add(col)
                     logger.info(f"  Auto-detected date column (Polars): {col}")
 
-    for col in actual_date_cols:
-        if col not in all_cols or col not in df.columns:
-            continue
-        sample = df[col].cast(pl.Utf8).fill_null("").head(50).drop_nulls().to_list()
-        # Filter out empty/sentinel values
-        sample = [s.strip() for s in sample if s.strip() not in ('', 'nan', 'None', 'NaN', 'NaT')]
+    valid_date_cols = [c for c in actual_date_cols if c in all_cols and c in df.columns]
+    if not valid_date_cols:
+        return df
+
+    # ONE head(50) for all date columns — replaces N per-column sample calls
+    format_sample = df.select(
+        [pl.col(c).cast(pl.Utf8).fill_null("") for c in valid_date_cols]
+    ).head(50)
+
+    # Build all strptime expressions; apply in a SINGLE with_columns() — one frame scan
+    date_exprs = []
+    for col in valid_date_cols:
+        sample = [v.strip() for v in format_sample[col].to_list() if v.strip() not in _SENTINELS]
         fmt = _detect_date_fmt(sample)
         if fmt:
-            try:
-                if "H" in fmt or "M" in fmt:
-                    df = df.with_columns(
-                        pl.col(col).cast(pl.Utf8).fill_null("")
-                        .str.strptime(pl.Datetime, fmt, strict=False)
-                        .dt.strftime("%Y/%m/%d").fill_null("").alias(col)
-                    )
-                else:
-                    df = df.with_columns(
-                        pl.col(col).cast(pl.Utf8).fill_null("")
-                        .str.strptime(pl.Date, fmt, strict=False)
-                        .dt.strftime("%Y/%m/%d").fill_null("").alias(col)
-                    )
-            except Exception:
-                # Fallback: try pandas-based parsing for this column
+            if "H" in fmt or "M" in fmt:
+                expr = (
+                    pl.col(col).cast(pl.Utf8).fill_null("")
+                    .str.strptime(pl.Datetime, fmt, strict=False)
+                    .dt.strftime("%Y/%m/%d").fill_null("")
+                )
+            else:
+                expr = (
+                    pl.col(col).cast(pl.Utf8).fill_null("")
+                    .str.strptime(pl.Date, fmt, strict=False)
+                    .dt.strftime("%Y/%m/%d").fill_null("")
+                )
+        else:
+            # No format detected — Polars native auto-parse; preserves original for non-date values
+            expr = (
+                pl.col(col).cast(pl.Utf8).fill_null("")
+                .str.to_date(format=None, strict=False)
+                .dt.strftime("%Y/%m/%d")
+                .fill_null(pl.col(col).cast(pl.Utf8).fill_null(""))
+            )
+        date_exprs.append(expr.alias(col))
+
+    if date_exprs:
+        try:
+            df = df.with_columns(date_exprs)  # single frame scan for ALL date columns
+        except Exception as _e:
+            logger.debug(f"Batch date normalization failed ({_e}), retrying per-column")
+            for single_expr in date_exprs:
                 try:
-                    col_pandas = df[col].cast(pl.Utf8).fill_null("").to_pandas()
-                    normalized = _smart_parse_dates(col_pandas)
-                    df = df.with_columns(pl.Series(col, normalized.values).cast(pl.Utf8))
+                    df = df.with_columns([single_expr])
                 except Exception:
                     pass
-        else:
-            # No format detected by strptime — try dateutil-based parsing
-            try:
-                col_pandas = df[col].cast(pl.Utf8).fill_null("").to_pandas()
-                if _is_date_like_column(col_pandas):
-                    normalized = _smart_parse_dates(col_pandas)
-                    df = df.with_columns(pl.Series(col, normalized.values).cast(pl.Utf8))
-            except Exception:
-                pass
+
     return df
 
 
 def _pl_detect_numeric_cols(df_l, df_o, cols_to_compare):
-    """Detect numeric columns — two head() scans for all columns instead of N×2."""
+    """Detect numeric columns — one vectorized select() across all columns (single frame scan)."""
     import polars as pl
     numeric_columns = set()
     sentinel = ["", "nan", "None", "NaN"]
@@ -8535,27 +8559,45 @@ def _pl_detect_numeric_cols(df_l, df_o, cols_to_compare):
     if not valid_cols:
         return numeric_columns
 
-    # One scan per side, all columns at once
     l_sample = df_l.select([pl.col(c).cast(pl.Utf8).alias(c) for c in valid_cols]).head(2500)
     o_sample = df_o.select([pl.col(c).cast(pl.Utf8).alias(c) for c in valid_cols]).head(2500)
     combined = pl.concat([l_sample, o_sample])
 
-    for col in valid_cols:
-        try:
-            non_empty = combined.filter(~pl.col(col).is_in(sentinel)).select(pl.col(col))
-            if len(non_empty) == 0:
-                continue
-            cleaned = non_empty.with_columns(
-                pl.col(col).str.replace_all("[%,]", "")
-                .cast(pl.Float64, strict=False).alias("_ntest")
-            )
-            num_count = cleaned.select(pl.col("_ntest").is_not_null().sum()).item()
-            total = len(non_empty)
-            has_dash = non_empty.select(pl.col(col).str.contains(r"\-").mean()).item() or 0.0
-            if (num_count / total) >= 0.8 and has_dash < 0.2:
-                numeric_columns.add(col)
-        except Exception:
+    n = len(valid_cols)
+    # ONE select() — N×3 expressions run in Polars' parallel Rust executor; replaces N×3 serial ops
+    try:
+        row = combined.select(
+            # numeric count: non-sentinel AND castable to Float64
+            [
+                (
+                    ~pl.col(c).is_in(sentinel) &
+                    pl.col(c).str.replace_all("[%,]", "").cast(pl.Float64, strict=False).is_not_null()
+                ).sum().alias(f"_nc_{i}")
+                for i, c in enumerate(valid_cols)
+            ] +
+            # total non-sentinel count (denominator)
+            [
+                (~pl.col(c).is_in(sentinel)).sum().alias(f"_tot_{i}")
+                for i, c in enumerate(valid_cols)
+            ] +
+            # dash count: non-sentinel AND contains "-" (guards against date-like strings)
+            [
+                (~pl.col(c).is_in(sentinel) & pl.col(c).str.contains(r"\-")).sum().alias(f"_dc_{i}")
+                for i, c in enumerate(valid_cols)
+            ]
+        ).row(0)
+    except Exception:
+        return numeric_columns
+
+    for i, col in enumerate(valid_cols):
+        tot = row[n + i]
+        if tot == 0:
             continue
+        nc = row[i]
+        dc = row[2 * n + i]
+        if (nc / tot) >= 0.8 and (dc / tot) < 0.2:
+            numeric_columns.add(col)
+
     return numeric_columns
 
 
@@ -9022,15 +9064,21 @@ async def post_validation_excel(
             legacy_df = legacy_df.with_columns(key_norm_exprs)
             oracle_renamed = oracle_renamed.with_columns(key_norm_exprs)
 
-        # --- [POLARS-NATIVE] Date Normalization ---
-        logger.info("Normalizing dates (Polars) with auto-detection...")
-        # Pre-compute comparison columns for auto-detect
+        # --- [POLARS-NATIVE] Date Normalization (parallel — both sides at once) ---
+        logger.info("Normalizing dates (Polars, parallel, auto-detection)...")
         _pre_cols_to_compare = list(mappings_dict.keys())
         _pre_cols_to_compare = [c for c in _pre_cols_to_compare if c in legacy_df.columns and c in oracle_renamed.columns]
-        legacy_df = _pl_apply_date_normalization(legacy_df, legacy_date_cols, list(legacy_df.columns),
-                                                  auto_detect=True, compare_cols=_pre_cols_to_compare)
-        oracle_renamed = _pl_apply_date_normalization(oracle_renamed, target_date_cols, list(oracle_renamed.columns),
-                                                       auto_detect=True, compare_cols=_pre_cols_to_compare)
+        with _cf.ThreadPoolExecutor(max_workers=2, thread_name_prefix="date-norm") as _dn_pool:
+            _f_l_dn = _dn_pool.submit(
+                _pl_apply_date_normalization, legacy_df, legacy_date_cols,
+                list(legacy_df.columns), True, _pre_cols_to_compare
+            )
+            _f_o_dn = _dn_pool.submit(
+                _pl_apply_date_normalization, oracle_renamed, target_date_cols,
+                list(oracle_renamed.columns), True, _pre_cols_to_compare
+            )
+            legacy_df = _f_l_dn.result()
+            oracle_renamed = _f_o_dn.result()
 
         # --- [POLARS-NATIVE] Key Generation ---
         logger.info("Generating keys (Polars)...")
@@ -10107,38 +10155,64 @@ def _run_validation_job(job_id: str, p: dict):
             if mapped in pl_oracle.columns:
                 target_date_cols_explicit.add(mapped)
 
-        logger.info(f"[{job_id[:8]}] Applying date normalisation (auto-detect enabled)...")
-        pl_legacy = _pl_apply_date_normalization(
-            pl_legacy, legacy_date_cols_explicit, pl_legacy.columns,
-            auto_detect=True, compare_cols=cols_to_compare
-        )
-        pl_oracle = _pl_apply_date_normalization(
-            pl_oracle, target_date_cols_explicit, pl_oracle.columns,
-            auto_detect=True, compare_cols=cols_to_compare
-        )
+        logger.info(f"[{job_id[:8]}] Applying date normalisation (parallel, auto-detect enabled)...")
+        _t_date = time.perf_counter()
+        with _cf.ThreadPoolExecutor(max_workers=2, thread_name_prefix="date-norm") as _dn_pool:
+            _f_l_dn = _dn_pool.submit(
+                _pl_apply_date_normalization,
+                pl_legacy, legacy_date_cols_explicit, list(pl_legacy.columns),
+                True, cols_to_compare
+            )
+            _f_o_dn = _dn_pool.submit(
+                _pl_apply_date_normalization,
+                pl_oracle, target_date_cols_explicit, list(pl_oracle.columns),
+                True, cols_to_compare
+            )
+            pl_legacy = _f_l_dn.result()
+            pl_oracle = _f_o_dn.result()
+        logger.info(f"[{job_id[:8]}] Date normalisation complete in {time.perf_counter()-_t_date:.2f}s")
 
-        # Composite key generation via Polars concat_str
+        # Composite key generation — both sides in parallel
         _job_update(job_id, progress=32, stage="Generating composite keys")
-        pl_legacy = pl_legacy.with_columns(_pl_gen_composite_key(key_cols_list).alias(INTERNAL_KEY))
-        pl_oracle = pl_oracle.with_columns(_pl_gen_composite_key(key_cols_list).alias(INTERNAL_KEY))
+        _key_expr = _pl_gen_composite_key(key_cols_list)
+        with _cf.ThreadPoolExecutor(max_workers=2, thread_name_prefix="key-gen") as _kg_pool:
+            _f_l_kg = _kg_pool.submit(
+                lambda df: df.with_columns(_key_expr.alias(INTERNAL_KEY)), pl_legacy
+            )
+            _f_o_kg = _kg_pool.submit(
+                lambda df: df.with_columns(_key_expr.alias(INTERNAL_KEY)), pl_oracle
+            )
+            pl_legacy = _f_l_kg.result()
+            pl_oracle = _f_o_kg.result()
         _job_update(job_id, progress=35, stage="Keys generated — starting comparison")
         logger.info(f"[{job_id[:8]}] Normalisation complete")
 
-        # ── Stage 5: Numeric detection — Polars frames passed directly ───
+        # ── Stage 5: Numeric detection — vectorized single-pass ──────────
         _job_update(job_id, progress=37, stage="Detecting column data types")
         numeric_cols = _pl_detect_numeric_cols(pl_legacy, pl_oracle, cols_to_compare)
         logger.info(f"[{job_id[:8]}] Numeric columns detected: {numeric_cols}")
 
-        # ── Stage 5b: Duplicate key handling — Polars window function ────
+        # ── Stage 5b: Duplicate key handling — parallel detection ─────────
         _job_update(job_id, progress=38, stage="Handling duplicate keys")
-        legacy_key_dupes = pl_legacy.select(pl.col(INTERNAL_KEY).is_duplicated().sum()).item()
-        oracle_key_dupes = pl_oracle.select(pl.col(INTERNAL_KEY).is_duplicated().sum()).item()
+        _ik = INTERNAL_KEY
+        with _cf.ThreadPoolExecutor(max_workers=2, thread_name_prefix="dup-check") as _dup_pool:
+            _f_l_dup = _dup_pool.submit(
+                lambda df: df.select(pl.col(_ik).is_duplicated().sum()).item(), pl_legacy
+            )
+            _f_o_dup = _dup_pool.submit(
+                lambda df: df.select(pl.col(_ik).is_duplicated().sum()).item(), pl_oracle
+            )
+            legacy_key_dupes = _f_l_dup.result()
+            oracle_key_dupes = _f_o_dup.result()
         logger.info(f"[{job_id[:8]}] Key duplicates — Legacy: {legacy_key_dupes:,}, Oracle: {oracle_key_dupes:,}")
 
         if legacy_key_dupes > 0 or oracle_key_dupes > 0:
             logger.info(f"[{job_id[:8]}] Adding positional row number within each key group")
-            pl_legacy = _pl_add_positional_key(pl_legacy, INTERNAL_KEY)
-            pl_oracle = _pl_add_positional_key(pl_oracle, INTERNAL_KEY)
+            with _cf.ThreadPoolExecutor(max_workers=2, thread_name_prefix="pos-key") as _pk_pool:
+                _f_l_pk = _pk_pool.submit(_pl_add_positional_key, pl_legacy, INTERNAL_KEY)
+                _f_o_pk = _pk_pool.submit(_pl_add_positional_key, pl_oracle, INTERNAL_KEY)
+                pl_legacy = _f_l_pk.result()
+                pl_oracle = _f_o_pk.result()
             logger.info(f"[{job_id[:8]}] Positional keys assigned")
 
         # ── Stage 6: Polars join (40–60%) — zero Pandas↔Polars conversion ─
