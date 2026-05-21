@@ -8395,18 +8395,26 @@ def _polars_read_file(file_path: str, sheet_name=None):
             except ValueError:
                 sheet_name_param = stripped
 
-    # calamine (Rust) only — xlsx2csv intentionally removed: it's 10-100x slower on
-    # large files and will hang for 10+ minutes on 60 MB workbooks.
+    # Rust engines first (fast, streaming), openpyxl last (slow DOM-based fallback).
+    # xlsx2csv intentionally excluded: 10-100x slower and hangs on large workbooks.
+    # Try fastexcel (polars-team engine, polars >= 0.20 default) then calamine
+    # (python-calamine package, polars < 0.20 legacy). Both wrap the calamine Rust crate.
     df = None
+    _sheet_kw: dict = {}
+    if sheet_id_param is not None:
+        _sheet_kw["sheet_id"] = sheet_id_param
+    elif sheet_name_param is not None:
+        _sheet_kw["sheet_name"] = sheet_name_param
+
+    # "calamine" is the Polars engine name for the fastexcel/python-calamine Rust backend.
+    # "fastexcel" is not a valid engine string in the current Polars API.
     try:
-        kw: dict = {"engine": "calamine"}
-        if sheet_id_param is not None:
-            kw["sheet_id"] = sheet_id_param
-        elif sheet_name_param is not None:
-            kw["sheet_name"] = sheet_name_param
-        df = pl.read_excel(file_path, **kw)
-    except Exception as _cal_err:
-        logger.warning(f"calamine failed ({type(_cal_err).__name__}: {_cal_err}), falling back to openpyxl")
+        df = pl.read_excel(file_path, engine="calamine", **_sheet_kw)
+    except Exception as _eng_err:
+        logger.warning(f"calamine engine failed ({type(_eng_err).__name__}: {_eng_err}), falling back to openpyxl")
+
+    if df is None:
+        logger.warning("calamine failed, falling back to openpyxl (slow)")
 
     if df is None:
         sp = 0
@@ -10118,7 +10126,9 @@ def _run_validation_job(job_id: str, p: dict):
         # Resolve key_cols_list and mappings_dict against actual column names
         oracle_col_lower = {c.strip().lower(): c for c in oracle_cols}
         legacy_col_lower = {c.strip().lower(): c for c in legacy_cols}
-        key_cols_list = [oracle_col_lower.get(k.strip().lower(), k) for k in key_cols_list]
+        key_cols_list = list(dict.fromkeys(
+            oracle_col_lower.get(k.strip().lower(), k) for k in key_cols_list
+        ))
 
         resolved_mappings: Dict[str, str] = {}
         for l_col, o_col in mappings_dict.items():
@@ -10128,10 +10138,10 @@ def _run_validation_job(job_id: str, p: dict):
             resolved_mappings[common_name] = o_col
         mappings_dict = resolved_mappings
 
-        included_cols_list = [
+        included_cols_list = list(dict.fromkeys(
             oracle_col_lower.get(c.strip().lower(), legacy_col_lower.get(c.strip().lower(), c))
             for c in included_cols_list
-        ]
+        ))
         legacy_date_set = {legacy_col_lower.get(c.strip().lower(), c) for c in legacy_date_set}
         target_date_set_resolved = set()
         for c in target_date_set:
@@ -10456,8 +10466,8 @@ def _run_validation_job(job_id: str, p: dict):
         # Non-validated source/target columns add 40–50 extra cols to a sheet
         # that can already be 100k rows — inflating cell count 4× for no analysis
         # value. Full-fidelity data (all columns, all rows) is in the CSV file.
-        _disp_l = [c for c in (key_cols_list + cols_to_compare) if c in legacy_for_excel.columns]
-        _disp_o = [c for c in (key_cols_list + cols_to_compare) if c in oracle_for_excel.columns]
+        _disp_l = list(dict.fromkeys(c for c in (key_cols_list + cols_to_compare) if c in legacy_for_excel.columns))
+        _disp_o = list(dict.fromkeys(c for c in (key_cols_list + cols_to_compare) if c in oracle_for_excel.columns))
         legacy_only_df = (
             legacy_for_excel.select(_disp_l) if _disp_l else legacy_for_excel.drop(INTERNAL_KEY)
         ).to_pandas()
@@ -10579,9 +10589,9 @@ def _run_validation_job(job_id: str, p: dict):
         _job_update(job_id, progress=88, stage="Writing Excel (xlsxwriter)")
         _t_xls = time.perf_counter()
 
-        with pd.ExcelWriter(main_output_path, engine="xlsxwriter") as writer:
-            _wb = writer.book
-
+        import xlsxwriter as _xw
+        _wb = _xw.Workbook(main_output_path, {'in_memory': False})
+        try:
             # xlsxwriter format factory
             def _fmt(**kw):
                 return _wb.add_format({'font_name': 'Calibri', 'font_size': 8, **kw})
@@ -10605,11 +10615,13 @@ def _run_validation_job(job_id: str, p: dict):
 
             def _write_styled(df, sn, hdr_fmt):
                 """Write df with styled header row, freeze pane, and column widths.
-                Uses startrow=1 + manual header write so the large data write
-                stays as a single xlsxwriter streaming pass (no DOM overhead)."""
+                Uses write_column on numpy slices so the large data write stays as
+                a single xlsxwriter streaming pass (no DOM overhead)."""
                 safe_sn = _safe_sheet_name(sn, max_len=28)
                 if df.empty:
-                    df.to_excel(writer, index=False, sheet_name=safe_sn)
+                    ws_empty = _wb.add_worksheet(safe_sn)
+                    for ci, col in enumerate(df.columns):
+                        ws_empty.write(0, ci, col, hdr_fmt)
                     return [safe_sn]
                 chunks = (
                     [(1, df)] if len(df) <= EXCEL_MAX_ROWS
@@ -10659,10 +10671,14 @@ def _run_validation_job(job_id: str, p: dict):
             _write_styled(legacy_only_df,  sheet_missing_oc,    _f_hdr_oc)
             _write_styled(validation_df,   sheet_discrepancies, _f_hdr_err)
 
-            # Configuration sheet (small — N_mapped_cols rows)
+            # Configuration sheet (small — N_mapped_cols rows): write natively to
+            # avoid pd.ExcelWriter round-trip for a sheet that has no large data.
             if not config_df.empty:
-                config_df.to_excel(writer, index=False, header=False, startrow=1, sheet_name="Configuration")
-                ws_cfg = writer.sheets["Configuration"]
+                ws_cfg = _wb.add_worksheet("Configuration")
+                _arr_cfg = config_df.to_numpy(na_value='')
+                for ri, _row in enumerate(_arr_cfg, 1):
+                    for ci, val in enumerate(_row):
+                        ws_cfg.write(ri, ci, val if val is not None else '')
                 for ci, col in enumerate(config_df.columns):
                     ws_cfg.write(0, ci, col, _f_hdr_grn)
                 ws_cfg.freeze_panes(1, 0)
@@ -10703,6 +10719,9 @@ def _run_validation_job(job_id: str, p: dict):
                     ws_sum.write(ri, 3, '', _fs_bdr)
                     ws_sum.write(ri, 4, '', _fs_bdr)
                     ws_sum.write(ri, 5, '', _fs_bdr)
+
+        finally:
+            _wb.close()
 
         logger.info(f"[{job_id[:8]}] xlsxwriter styled write: {time.perf_counter()-_t_xls:.2f}s")
         _job_update(job_id, progress=92, stage="Excel file written")

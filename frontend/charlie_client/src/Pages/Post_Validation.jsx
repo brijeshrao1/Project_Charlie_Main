@@ -737,6 +737,7 @@ export default function PostValidationStepper() {
       validateColumns: validateCols,
       includeColumns:  includeCols,
       outputAsZip,
+      includeFullDataTab,
       ...(configData?.hireActions            && { hireActions:            configData.hireActions }),
       ...(configData?.rehireActions           && { rehireActions:          configData.rehireActions }),
       ...(configData?.termActions             && { termActions:            configData.termActions }),
@@ -754,7 +755,7 @@ export default function PostValidationStepper() {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-  }, [rows, outputAsZip, configData]);
+  }, [rows, outputAsZip, includeFullDataTab, configData]);
 
   /* Card entrance */
   useEffect(() => {
@@ -969,6 +970,7 @@ export default function PostValidationStepper() {
       );
 
       if (configData?.outputAsZip != null) setOutputAsZip(configData.outputAsZip);
+      if (configData?.includeFullDataTab != null) setIncludeFullDataTab(configData.includeFullDataTab);
 
       setProgress(100);
       setStage("Done");
@@ -2001,6 +2003,9 @@ export default function PostValidationStepper() {
                 background: "linear-gradient(145deg, #ddd6c6, #cec5b5)",
                 boxShadow: "inset 2px 2px 6px rgba(0,0,0,.18), inset -2px -2px 5px rgba(255,255,255,.55)",
                 border: "1px solid rgba(255,255,255,.2)",
+                opacity: outputAsZip ? 0.45 : 1,
+                pointerEvents: outputAsZip ? "none" : "auto",
+                transition: "opacity .25s",
               }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                   <div style={{
@@ -2012,9 +2017,11 @@ export default function PostValidationStepper() {
                     fontFamily: "'DM Mono', monospace",
                     fontSize: 9, color: "var(--warm-drk)", letterSpacing: ".04em",
                   }}>
-                    {includeFullDataTab
-                      ? "Source + target sheet included"
-                      : "Skipped — faster validation"}
+                    {outputAsZip
+                      ? "N/A in zip mode"
+                      : includeFullDataTab
+                        ? "Source + target sheet included"
+                        : "Skipped — faster validation"}
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
