@@ -10433,23 +10433,37 @@ def _run_validation_job(job_id: str, p: dict):
         _job_update(job_id, progress=68,
                     stage=f"Missing: {count_missing_oracle:,} in {tgt_label}, {count_missing_ps:,} in {src_label}")
 
-        # Write CSV for large missing sets; cap Excel to _EXCEL_ROW_CAP rows
-        if count_missing_oracle > _EXCEL_ROW_CAP:
+        # Missing-records sheets carry ALL source/target columns (potentially 60+).
+        # 100k×60 = 6M cells takes ~42 s in any Python Excel writer.
+        # Cap Excel to 20k rows (1.2M cells → ~4 s); full data always in CSV.
+        _MISSING_EXCEL_CAP = 20_000
+
+        if count_missing_oracle > _MISSING_EXCEL_CAP:
             legacy_only_pl.drop(INTERNAL_KEY).write_csv(missing_oracle_csv_path)
-        if count_missing_ps > _EXCEL_ROW_CAP:
+        if count_missing_ps > _MISSING_EXCEL_CAP:
             oracle_only_pl.drop(INTERNAL_KEY).write_csv(missing_ps_csv_path)
 
         # Convert missing DFs to pandas — capped for Excel
         legacy_for_excel = (
-            legacy_only_pl.head(_EXCEL_ROW_CAP) if count_missing_oracle > _EXCEL_ROW_CAP
+            legacy_only_pl.head(_MISSING_EXCEL_CAP) if count_missing_oracle > _MISSING_EXCEL_CAP
             else legacy_only_pl
         )
         oracle_for_excel = (
-            oracle_only_pl.head(_EXCEL_ROW_CAP) if count_missing_ps > _EXCEL_ROW_CAP
+            oracle_only_pl.head(_MISSING_EXCEL_CAP) if count_missing_ps > _MISSING_EXCEL_CAP
             else oracle_only_pl
         )
-        legacy_only_df = legacy_for_excel.drop(INTERNAL_KEY).to_pandas()
-        oracle_only_df = oracle_for_excel.drop(INTERNAL_KEY).to_pandas()
+        # Excel sheet: key + comparison columns only.
+        # Non-validated source/target columns add 40–50 extra cols to a sheet
+        # that can already be 100k rows — inflating cell count 4× for no analysis
+        # value. Full-fidelity data (all columns, all rows) is in the CSV file.
+        _disp_l = [c for c in (key_cols_list + cols_to_compare) if c in legacy_for_excel.columns]
+        _disp_o = [c for c in (key_cols_list + cols_to_compare) if c in oracle_for_excel.columns]
+        legacy_only_df = (
+            legacy_for_excel.select(_disp_l) if _disp_l else legacy_for_excel.drop(INTERNAL_KEY)
+        ).to_pandas()
+        oracle_only_df = (
+            oracle_for_excel.select(_disp_o) if _disp_o else oracle_for_excel.drop(INTERNAL_KEY)
+        ).to_pandas()
         del legacy_for_excel, oracle_for_excel
         for col in comment_cols:
             legacy_only_df[col] = ""
@@ -10521,68 +10535,20 @@ def _run_validation_job(job_id: str, p: dict):
         # ── Stage 14: Write Styled Excel (85–95%) ─────────────────────
         _job_update(job_id, progress=85, stage="Writing styled Excel report")
 
-        font_white = Font(name="Calibri", size=8, color="FFFFFF", bold=True)
-        font_black = Font(name="Calibri", size=8, color="000000", bold=True)
-        font_bold_black = Font(name="Calibri", size=8, bold=True)
-        font_normal = Font(name="Calibri", size=8)
-        fill_header_ps = PatternFill("solid", fgColor="1F497D")
-        fill_header_oc = PatternFill("solid", fgColor="31869B")
-        fill_header_err = PatternFill("solid", fgColor="C0504D")
-        fill_green = PatternFill("solid", fgColor="00B050")
-        fill_grey = PatternFill("solid", fgColor="D9D9D9")
-        fill_orange = PatternFill("solid", fgColor="FF9900")
-        border_thin = Border(
+        # openpyxl style objects — used only in Phase 3 (_style_full_data_header)
+        font_white   = Font(name="Calibri", size=8, color="FFFFFF", bold=True)
+        align_center = Alignment(horizontal="center", vertical="center")
+        fill_header_ps  = PatternFill("solid", fgColor="1F497D")
+        fill_header_oc  = PatternFill("solid", fgColor="31869B")
+        border_thin  = Border(
             left=Side(style="thin"), right=Side(style="thin"),
             top=Side(style="thin"), bottom=Side(style="thin"),
         )
-        align_center = Alignment(horizontal="center", vertical="center")
 
-        sheet_missing_ps = _safe_sheet_name(f"Missing in {src_label}")
-        sheet_missing_oc = _safe_sheet_name(f"Missing in {tgt_label}")
+        sheet_missing_ps    = _safe_sheet_name(f"Missing in {src_label}")
+        sheet_missing_oc    = _safe_sheet_name(f"Missing in {tgt_label}")
         sheet_discrepancies = "Data Discrepancies"
-
-        def _style_header(wb, sn, fill):
-            if sn not in wb.sheetnames:
-                return
-            ws = wb[sn]
-            ws.freeze_panes = "A2"
-            comment_idxs = []
-            for cell in ws[1]:
-                cell.fill, cell.font = fill, font_white
-                cell.alignment, cell.border = align_center, border_thin
-                if cell.value in comment_cols:
-                    cell.fill, cell.font = fill_orange, font_black
-                    comment_idxs.append(cell.column)
-            body_cap = min(ws.max_row, 500)
-            for body_row in ws.iter_rows(min_row=2, max_row=body_cap):
-                for cell in body_row:
-                    cell.font = font_normal
-            for col in ws.iter_cols(max_row=min(50, ws.max_row)):
-                ml = max((len(str(c.value)) if c.value else 0) for c in col)
-                ws.column_dimensions[get_column_letter(col[0].column)].width = min(max((ml + 2) * 1.2, 10), 60)
-            for ci in comment_idxs:
-                border_cap = min(ws.max_row, 5000)
-                for cells in ws.iter_cols(min_col=ci, max_col=ci, min_row=2, max_row=border_cap):
-                    for c in cells:
-                        c.border = border_thin
-
-        def _style_config(wb, sn="Configuration"):
-            if sn not in wb.sheetnames:
-                return
-            ws = wb[sn]
-            ws.freeze_panes = "A2"
-            for cell in ws[1]:
-                cell.fill, cell.font = fill_green, font_white
-                cell.alignment, cell.border = align_center, border_thin
-            for row in ws.iter_rows(min_row=2, max_row=min(ws.max_row, 200)):
-                for cell in row:
-                    cell.font = font_normal
-                    cell.border = border_thin
-                    if str(cell.value).strip().lower() in {"yes", "no"}:
-                        cell.alignment = align_center
-            for col in ws.iter_cols(max_row=ws.max_row):
-                ml = max((len(str(c.value)) if c.value else 0) for c in col)
-                ws.column_dimensions[get_column_letter(col[0].column)].width = min(max(ml + 2, 12), 45)
+        sheet_full_data     = _safe_sheet_name(f"{src_label} - {tgt_label} Data", max_len=28)
 
         def _style_full_data_header(ws, n_compare_cols):
             """Style the full-data sheet with dual-colour headers (PS blue | OC teal)
@@ -10605,92 +10571,141 @@ def _run_validation_job(job_id: str, p: dict):
                     max((ml + 2) * 1.2, 10), 60
                 )
 
-        _job_update(job_id, progress=88, stage="Styling Excel sheets")
-
-        sheet_full_data = _safe_sheet_name(f"{src_label} - {tgt_label} Data", max_len=28)
-
-        # ── Phase 1: fast data write with xlsxwriter (small sheets only) ────
-        # full_data_for_excel is intentionally excluded here: for large datasets
-        # (600k rows × N cols) the BytesIO would be hundreds of MB and
-        # openpyxl.load_workbook() would build a DOM of tens-of-millions of cell
-        # objects → MemoryError. Full data is appended in Phase 3 instead.
-        _job_update(job_id, progress=88, stage="Writing Excel data (xlsxwriter)")
+        # ── Phase 1: xlsxwriter — write ALL sheets with native styling ────
+        # Eliminates the openpyxl load_workbook + save round-trip that was the
+        # 88% bottleneck: for 100k-row × 60-col missing-records sheets openpyxl
+        # parsed and re-serialised 12M+ cell objects (30-60 s). xlsxwriter is a
+        # streaming C writer; styling large sheets costs < 1 s.
+        _job_update(job_id, progress=88, stage="Writing Excel (xlsxwriter)")
         _t_xls = time.perf_counter()
-        _xls_buf = BytesIO()
-        with pd.ExcelWriter(_xls_buf, engine="xlsxwriter") as writer:
-            summary_df.to_excel(writer, index=False, header=False, sheet_name="Summary")
-            config_df.to_excel(writer, index=False, sheet_name="Configuration")
-            oracle_only_df.to_excel(writer, index=False, sheet_name=sheet_missing_ps)
-            legacy_only_df.to_excel(writer, index=False, sheet_name=sheet_missing_oc)
-            write_df_excel_paginated(writer, validation_df, sheet_discrepancies)
-        _xls_buf.seek(0)
-        logger.info(f"[{job_id[:8]}] xlsxwriter data write: {time.perf_counter()-_t_xls:.2f}s")
 
-        # ── Phase 2: open with openpyxl just for styling (small workbook) ─
-        _job_update(job_id, progress=92, stage="Styling Excel sheets (openpyxl)")
-        _t_style = time.perf_counter()
-        wb = openpyxl.load_workbook(_xls_buf)
-        del _xls_buf
+        with pd.ExcelWriter(main_output_path, engine="xlsxwriter") as writer:
+            _wb = writer.book
 
-        _style_header(wb, sheet_missing_ps, fill_header_ps)
-        _style_header(wb, sheet_missing_oc, fill_header_oc)
-        for sn in wb.sheetnames:
-            if sn.startswith(sheet_discrepancies):
-                _style_header(wb, sn, fill_header_err)
-        _style_config(wb)
-        wb["Configuration"].sheet_state = "hidden"
+            # xlsxwriter format factory
+            def _fmt(**kw):
+                return _wb.add_format({'font_name': 'Calibri', 'font_size': 8, **kw})
 
-        # Summary styling
-        ws_sum = wb["Summary"]
-        ws_sum.sheet_view.showGridLines = False
-        ws_sum.column_dimensions["A"].width = 2
-        ws_sum.column_dimensions["B"].width = 45
-        for ch in ("C", "D", "E", "F"):
-            ws_sum.column_dimensions[ch].width = 25
+            _f_hdr_ps   = _fmt(bold=True, bg_color='#1F497D', font_color='white',  border=1, align='center', valign='vcenter')
+            _f_hdr_oc   = _fmt(bold=True, bg_color='#31869B', font_color='white',  border=1, align='center', valign='vcenter')
+            _f_hdr_err  = _fmt(bold=True, bg_color='#C0504D', font_color='white',  border=1, align='center', valign='vcenter')
+            _f_hdr_grn  = _fmt(bold=True, bg_color='#00B050', font_color='white',  border=1, align='center', valign='vcenter')
+            _f_hdr_org  = _fmt(bold=True, bg_color='#FF9900', font_color='black',  border=1, align='center', valign='vcenter')
+            _f_bdr      = _fmt(border=1)
+            # Summary formats
+            _fs_grn_hdr = _fmt(bold=True, bg_color='#00B050', font_color='white',  border=1, align='center', valign='vcenter')
+            _fs_grn_lbl = _fmt(bg_color='#00B050', font_color='white',  border=1)
+            _fs_val     = _fmt(align='center', border=1)
+            _fs_grey_l  = _fmt(bold=True, bg_color='#D9D9D9', border=1)
+            _fs_grey_v  = _fmt(bold=True, bg_color='#D9D9D9', align='center', border=1)
+            _fs_org     = _fmt(bold=True, bg_color='#FF9900', font_color='black', align='center', border=1)
+            _fs_bdr     = _fmt(border=1)
 
-        for row in ws_sum.iter_rows(min_row=1, max_row=ws_sum.max_row):
-            if len(row) < 3:
-                continue
-            for cell in row:
-                cell.font = font_normal
-            cell_b = row[1]
-            if not cell_b.value:
-                continue
-            cell_b.border = border_thin
-            row[2].border = border_thin
-            cc = [ws_sum.cell(row=cell_b.row, column=c) for c in (4, 5, 6)]
+            _comment_set = set(comment_cols)
 
-            if cell_b.value in ("Missing Records Summary", "Data Discrepancies Summary"):
-                ws_sum.merge_cells(start_row=cell_b.row, start_column=2,
-                                   end_row=cell_b.row, end_column=3)
-                cell_b.fill, cell_b.font = fill_green, font_white
-                cell_b.alignment = align_center
-                ws_sum.row_dimensions[cell_b.row].height = 20
-                for c in cc:
-                    c.fill, c.font = fill_orange, font_black
-                    c.alignment, c.border = align_center, border_thin
-            elif "Total" in str(cell_b.value) or "Comparison Statistics" in str(cell_b.value):
-                if "Comparison Statistics" in str(cell_b.value):
-                    ws_sum.merge_cells(start_row=cell_b.row, start_column=2,
-                                       end_row=cell_b.row, end_column=3)
-                    cell_b.alignment = align_center
-                    ws_sum.row_dimensions[cell_b.row].height = 20
-                    cell_b.fill, cell_b.font = fill_green, font_white
+            def _write_styled(df, sn, hdr_fmt):
+                """Write df with styled header row, freeze pane, and column widths.
+                Uses startrow=1 + manual header write so the large data write
+                stays as a single xlsxwriter streaming pass (no DOM overhead)."""
+                safe_sn = _safe_sheet_name(sn, max_len=28)
+                if df.empty:
+                    df.to_excel(writer, index=False, sheet_name=safe_sn)
+                    return [safe_sn]
+                chunks = (
+                    [(1, df)] if len(df) <= EXCEL_MAX_ROWS
+                    else [(p, df.iloc[s:s + EXCEL_MAX_ROWS])
+                          for p, s in enumerate(range(0, len(df), EXCEL_MAX_ROWS), 1)]
+                )
+                names = []
+                for pg_num, chunk in chunks:
+                    pg_sn = safe_sn if pg_num == 1 else f"{safe_sn}_{pg_num}"
+                    # write_column on a per-column numpy slice is ~30% faster than
+                    # pandas to_excel() because it bypasses pandas' per-cell type
+                    # dispatch and writes a whole column in one xlsxwriter C call.
+                    ws = _wb.add_worksheet(pg_sn)
+                    _arr = chunk.to_numpy(na_value='')
+                    for _ci in range(_arr.shape[1]):
+                        ws.write_column(1, _ci, _arr[:, _ci].tolist())
+                    comment_col_idx = set()
+                    for ci, col in enumerate(chunk.columns):
+                        fmt = _f_hdr_org if col in _comment_set else hdr_fmt
+                        ws.write(0, ci, col, fmt)
+                        if col in _comment_set:
+                            comment_col_idx.add(ci)
+                    ws.freeze_panes(1, 0)
+                    sample = chunk.head(50)
+                    for ci, col in enumerate(chunk.columns):
+                        vals = sample.iloc[:, ci]
+                        ml = max(
+                            (len(str(v)) for v in vals if v is not None and str(v) not in ('', 'nan')),
+                            default=4,
+                        )
+                        ml = max(ml, len(str(col)))
+                        ws.set_column(ci, ci, min(max((ml + 2) * 1.2, 10), 60),
+                                      _f_bdr if ci in comment_col_idx else None)
+                    names.append(pg_sn)
+                return names
+
+            # Reserve Summary as the first tab by creating it first
+            ws_sum = _wb.add_worksheet("Summary")
+            ws_sum.hide_gridlines(2)
+            ws_sum.set_column('A:A', 2)
+            ws_sum.set_column('B:B', 45)
+            for _ch in ('C', 'D', 'E', 'F'):
+                ws_sum.set_column(f'{_ch}:{_ch}', 25)
+
+            # Large data sheets — styled headers via xlsxwriter (no openpyxl load)
+            _write_styled(oracle_only_df,  sheet_missing_ps,    _f_hdr_ps)
+            _write_styled(legacy_only_df,  sheet_missing_oc,    _f_hdr_oc)
+            _write_styled(validation_df,   sheet_discrepancies, _f_hdr_err)
+
+            # Configuration sheet (small — N_mapped_cols rows)
+            if not config_df.empty:
+                config_df.to_excel(writer, index=False, header=False, startrow=1, sheet_name="Configuration")
+                ws_cfg = writer.sheets["Configuration"]
+                for ci, col in enumerate(config_df.columns):
+                    ws_cfg.write(0, ci, col, _f_hdr_grn)
+                ws_cfg.freeze_panes(1, 0)
+                for ci, col in enumerate(config_df.columns):
+                    ml = max((len(str(v)) for v in config_df.iloc[:, ci] if v), default=4)
+                    ml = max(ml, len(str(col)))
+                    ws_cfg.set_column(ci, ci, min(max(ml + 2, 12), 45), _f_bdr)
+                ws_cfg.hide()
+
+            # Summary sheet — write cell-by-cell (tiny: ~20-30 rows × 6 cols)
+            for ri, row_data in enumerate(summary_data):
+                row6 = (list(row_data) + ['', '', '', '', '', ''])[:6]
+                _, val_b, val_c, val_d, val_e, val_f = row6
+                if not val_b:
+                    continue
+                val_b_str = str(val_b)
+                if val_b in ("Missing Records Summary", "Data Discrepancies Summary"):
+                    ws_sum.merge_range(ri, 1, ri, 2, val_b, _fs_grn_hdr)
+                    ws_sum.set_row(ri, 20)
+                    ws_sum.write(ri, 3, val_d or '', _fs_org)
+                    ws_sum.write(ri, 4, val_e or '', _fs_org)
+                    ws_sum.write(ri, 5, val_f or '', _fs_org)
+                elif 'Comparison Statistics' in val_b_str:
+                    ws_sum.merge_range(ri, 1, ri, 2, val_b, _fs_grn_hdr)
+                    ws_sum.set_row(ri, 20)
+                    ws_sum.write(ri, 3, '', _fs_bdr)
+                    ws_sum.write(ri, 4, '', _fs_bdr)
+                    ws_sum.write(ri, 5, '', _fs_bdr)
+                elif 'Total' in val_b_str:
+                    ws_sum.write(ri, 1, val_b, _fs_grey_l)
+                    ws_sum.write(ri, 2, val_c or '', _fs_grey_v)
+                    ws_sum.write(ri, 3, '', _fs_bdr)
+                    ws_sum.write(ri, 4, '', _fs_bdr)
+                    ws_sum.write(ri, 5, '', _fs_bdr)
                 else:
-                    cell_b.fill = fill_grey
-                    row[2].fill = fill_grey
-                    cell_b.font = font_bold_black
-                    row[2].font = font_bold_black
-                    row[2].alignment = align_center
-            else:
-                cell_b.fill, cell_b.font = fill_green, font_white
-                row[2].alignment = align_center
-                for c in cc:
-                    c.border = border_thin
+                    ws_sum.write(ri, 1, val_b, _fs_grn_lbl)
+                    ws_sum.write(ri, 2, val_c or '', _fs_val)
+                    ws_sum.write(ri, 3, '', _fs_bdr)
+                    ws_sum.write(ri, 4, '', _fs_bdr)
+                    ws_sum.write(ri, 5, '', _fs_bdr)
 
-        wb.save(main_output_path)
-        logger.info(f"[{job_id[:8]}] openpyxl styling + save: {time.perf_counter()-_t_style:.2f}s")
-        del wb
+        logger.info(f"[{job_id[:8]}] xlsxwriter styled write: {time.perf_counter()-_t_xls:.2f}s")
+        _job_update(job_id, progress=92, stage="Excel file written")
 
         # ── Phase 3: Append full-data sheet (openpyxl append mode) ───────
         # Written separately so the Phase 2 BytesIO stays small (avoids MemoryError).

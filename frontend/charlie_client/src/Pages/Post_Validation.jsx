@@ -674,6 +674,7 @@ export default function PostValidationStepper() {
   const [eta,                 setEta]                 = useState(null);
   const [error,               setError]               = useState("");
   const [outputAsZip,         setOutputAsZip]         = useState(false);
+  const [includeFullDataTab,  setIncludeFullDataTab]  = useState(false);
   const [sourceLabel,         setSourceLabel]         = useState("");
   const [targetLabel,         setTargetLabel]         = useState("");
   const [caseSensitive,       setCaseSensitive]       = useState(true);
@@ -1062,7 +1063,7 @@ export default function PostValidationStepper() {
       form.append("timestampColumnstarget",  JSON.stringify([]));
       form.append("legacySheet",             "");
       form.append("oracleSheet",             "");
-      form.append("includeSourceTargetFiles", !outputAsZip);
+      form.append("includeSourceTargetFiles", includeFullDataTab && !outputAsZip);
       form.append("outputAsZip",             outputAsZip);
       form.append("sourceLabel",             sourceLabel.trim() || "Source");
       form.append("targetLabel",             targetLabel.trim() || "Target");
@@ -1908,8 +1909,8 @@ export default function PostValidationStepper() {
               }}>{error}</div>
             )}
 
-            {/* Case Sensitivity + Output Format toggles */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 24 }}>
+            {/* Case Sensitivity + Output Format + Full Data Tab toggles */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 24 }}>
 
               {/* Case Sensitivity */}
               <div style={{
@@ -1991,6 +1992,48 @@ export default function PostValidationStepper() {
                   transition: "color .25s, font-weight .25s",
                 }}>Zip Bundle</span>
               </div>
+              </div>
+
+              {/* Full Data Tab toggle */}
+              <div style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "14px 20px", borderRadius: 12,
+                background: "linear-gradient(145deg, #ddd6c6, #cec5b5)",
+                boxShadow: "inset 2px 2px 6px rgba(0,0,0,.18), inset -2px -2px 5px rgba(255,255,255,.55)",
+                border: "1px solid rgba(255,255,255,.2)",
+              }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <div style={{
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 10, fontWeight: 600, letterSpacing: ".12em",
+                    textTransform: "uppercase", color: "var(--ink)",
+                  }}>Full Data Tab</div>
+                  <div style={{
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 9, color: "var(--warm-drk)", letterSpacing: ".04em",
+                  }}>
+                    {includeFullDataTab
+                      ? "Source + target sheet included"
+                      : "Skipped — faster validation"}
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 9, letterSpacing: ".08em", textTransform: "uppercase",
+                    color: !includeFullDataTab ? "var(--ink)" : "var(--warm-drk)",
+                    fontWeight: !includeFullDataTab ? 600 : 400,
+                    transition: "color .25s, font-weight .25s",
+                  }}>Skip</span>
+                  <Toggle active={includeFullDataTab} onClick={() => setIncludeFullDataTab(v => !v)} color="var(--green)" />
+                  <span style={{
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 9, letterSpacing: ".08em", textTransform: "uppercase",
+                    color: includeFullDataTab ? "var(--ink)" : "var(--warm-drk)",
+                    fontWeight: includeFullDataTab ? 600 : 400,
+                    transition: "color .25s, font-weight .25s",
+                  }}>Include</span>
+                </div>
               </div>
             </div>{/* end settings grid */}
 
