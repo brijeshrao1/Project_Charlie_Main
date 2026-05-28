@@ -8397,7 +8397,8 @@ def _polars_read_file(file_path: str, sheet_name=None):
     if ext == ".csv":
         return pl.scan_csv(
             file_path, infer_schema_length=0,
-            try_parse_dates=False, null_values=[""]
+            try_parse_dates=False, null_values=[""],
+            truncate_ragged_lines=True
         )
 
     # ── Excel handling ──
