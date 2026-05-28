@@ -932,7 +932,43 @@ export default function PostValidationStepper() {
         }
       );
 
-      const result = submitRes.data;
+      const { job_id: mappingJobId } = submitRes.data;
+      if (!mappingJobId) throw new Error("No job_id returned from mapping server");
+
+      // Poll /api/excel/columns/mapping/status/{job_id} until complete
+      const POLL_INTERVAL  = 1500;
+      const MAX_POLL_MS    = 5 * 60 * 1000;  // 5 min ceiling
+      const mappingStart   = Date.now();
+
+      const result = await new Promise((resolve, reject) => {
+        const interval = setInterval(async () => {
+          try {
+            if (Date.now() - mappingStart > MAX_POLL_MS) {
+              clearInterval(interval);
+              reject(new Error("Column mapping timed out after 5 minutes"));
+              return;
+            }
+            const statusRes = await api.get(
+              `/excel/columns/mapping/status/${mappingJobId}`,
+              { timeout: 10000 }
+            );
+            const { status, progress: p, stage: s, error: jobErr, result: jobResult } = statusRes.data;
+            requestAnimationFrame(() => {
+              if (p != null) setProgress(Math.max(5, Math.round(p * 0.95)));
+              if (s)         setStage(s);
+            });
+            if (status === "complete") {
+              clearInterval(interval);
+              resolve(jobResult);
+            } else if (status === "failed") {
+              clearInterval(interval);
+              reject(new Error(jobErr || "Column mapping failed on the server"));
+            }
+          } catch (pollErr) {
+            console.warn("Mapping poll error (will retry):", pollErr.message);
+          }
+        }, POLL_INTERVAL);
+      });
 
       const sourceCols = Array.isArray(result?.legacy_columns)  ? result.legacy_columns  : [];
       const targetCols = Array.isArray(result?.oracle_columns)  ? result.oracle_columns  : [];

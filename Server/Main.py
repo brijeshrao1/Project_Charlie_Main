@@ -67,6 +67,7 @@ except ImportError:
 
 # Load environment variables
 load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).parent / "api_keys.env", override=False)
 ORACLE_USERNAME = os.getenv("ORACLE_USERNAME")
 ORACLE_PASSWORD = os.getenv("ORACLE_PASSWORD")
 ORACLE_ENV = os.getenv("ORACLE_ENV") 
@@ -7954,7 +7955,10 @@ def get_smart_mapping_from_gemini(legacy_cols: List[str], oracle_cols: List[str]
         return fallback_result
 
     try:
-        client = genai.Client(api_key=GOOGLE_API_KEY)
+        client = genai.Client(
+            api_key=GOOGLE_API_KEY,
+            http_options={"timeout": 45000},   # 45 s — prevents indefinite hangs
+        )
 
         prompt = f"""
             You are a Data Integration Expert.
@@ -8242,25 +8246,45 @@ def _read_file_bytes(file_bytes: bytes, filename: str = ""):
         return pd.read_excel(io.BytesIO(file_bytes))
 
 
+def _read_columns_only(file_bytes: bytes, filename: str = "") -> list:
+    """Extract only the column header row from Excel or CSV bytes.
+    Uses openpyxl read_only mode — skips all data rows, ~50-100x faster
+    than a full read_excel for large workbooks.
+    """
+    ext = os.path.splitext(filename)[1].lower() if filename else ""
+    if ext == ".csv":
+        import csv
+        first_line = io.BytesIO(file_bytes).readline().decode("utf-8-sig", errors="replace")
+        return [c.strip() for c in next(csv.reader([first_line])) if c.strip()]
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+        ws = wb.active
+        cols = [str(cell.value).strip() for cell in next(ws.iter_rows(max_row=1)) if cell.value is not None]
+        wb.close()
+        return cols
+    except Exception:
+        # Fallback: full read, grab columns
+        return list(pd.read_excel(io.BytesIO(file_bytes), nrows=0).columns.astype(str))
+
+
 def _run_mapping_job(job_id: str, legacy_bytes: bytes, oracle_bytes: bytes,
                      legacy_filename: str = "", oracle_filename: str = ""):
     """Background thread: read files → call Gemini → store result."""
     logger.info(f"[Mapping] Starting job {job_id[:8]}, legacy_file='{legacy_filename}', oracle_file='{oracle_filename}'")
     try:
-        # ── Stage 1: Read Legacy File ──
+        # ── Stage 1: Read Legacy File (headers only) ──
         _mapping_job_update(job_id, progress=10, stage="Reading source file")
         try:
-            legacy_df = _read_file_bytes(legacy_bytes, legacy_filename)
-            legacy_columns = legacy_df.columns.astype(str).str.strip().tolist()
+            legacy_columns = _read_columns_only(legacy_bytes, legacy_filename)
         except Exception as e:
             _mapping_job_update(job_id, status="failed", error=f"Failed to read Legacy file: {str(e)}")
             return
 
-        # ── Stage 2: Read Oracle File ──
+        # ── Stage 2: Read Oracle File (headers only) ──
         _mapping_job_update(job_id, progress=25, stage="Reading target file")
         try:
-            oracle_df = _read_file_bytes(oracle_bytes, oracle_filename)
-            oracle_columns = oracle_df.columns.astype(str).str.strip().tolist()
+            oracle_columns = _read_columns_only(oracle_bytes, oracle_filename)
         except Exception as e:
             _mapping_job_update(job_id, status="failed", error=f"Failed to read Target file: {str(e)}")
             return
@@ -9705,9 +9729,10 @@ async def post_validation_large_scale(
 
     return {"job_id": job_id}
 
-# --- Data Transformation for the Source Code 
+# --- Data Mapping (background-job version — prevents event-loop blocking / timeouts)
 @app.post("/api/excel/post_validation/data_mapping")
 async def post_validation_data_mapping(
+    background_tasks: BackgroundTasks,
     legacyFile: UploadFile = File(...),
     oracleFile: UploadFile = File(...),
     mappingFile: UploadFile = File(None),
@@ -9716,91 +9741,33 @@ async def post_validation_data_mapping(
     legacySheet: str = Form(default=None),
     oracleSheet: str = Form(default=None),
 ):
-    """Simple synchronous mapping endpoint used by the frontend.
-    Returns column lists and a suggested mapping dict. If a mappingFile (JSON)
-    is provided the server will return it as the suggested mapping.
+    """Accepts files, queues a background mapping job, and returns {job_id} immediately.
+    Poll GET /api/excel/columns/mapping/status/{job_id} for progress and the final result.
     """
     try:
         legacy_bytes = await legacyFile.read()
         oracle_bytes = await oracleFile.read()
+        legacy_fname = legacyFile.filename or ""
+        oracle_fname = oracleFile.filename or ""
 
-        # Use helper to parse into pandas DataFrame
-        try:
-            df_legacy = _read_file_bytes(legacy_bytes, legacyFile.filename)
-            df_oracle = _read_file_bytes(oracle_bytes, oracleFile.filename)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to read uploaded files: {e}")
+        job_id = str(uuid.uuid4())
+        with _mapping_jobs_lock:
+            _mapping_jobs[job_id] = {
+                "status": "running",
+                "progress": 0,
+                "stage": "Uploading files",
+                "error": None,
+                "result": None,
+                "started_at": time.time(),
+                "eta_seconds": None,
+            }
 
-        legacy_cols = [str(c) for c in list(df_legacy.columns)]
-        oracle_cols = [str(c) for c in list(df_oracle.columns)]
+        background_tasks.add_task(
+            _run_mapping_job, job_id, legacy_bytes, oracle_bytes,
+            legacy_fname, oracle_fname
+        )
 
-        suggested = {}
-        # If mappingFile provided and is Excel/CSV, try to read mapping pairs from it
-        if mappingFile is not None:
-            try:
-                mf_bytes = await mappingFile.read()
-                # Parse using existing helper which reads csv/xlsx
-                df_map = _read_file_bytes(mf_bytes, mappingFile.filename)
-                # Normalize column names
-                cols_lc = {c.lower(): c for c in df_map.columns}
-                # Common header name candidates for source and target
-                src_cands = ["source", "legacy", "from", "src", "source_column", "sourcecol"]
-                tgt_cands = ["target", "oracle", "to", "tgt", "target_column", "targetcol"]
-
-                src_col = None
-                tgt_col = None
-                for cand in src_cands:
-                    if cand in cols_lc:
-                        src_col = cols_lc[cand]
-                        break
-                for cand in tgt_cands:
-                    if cand in cols_lc:
-                        tgt_col = cols_lc[cand]
-                        break
-
-                # If headers not found, but there are at least two columns, use first two
-                if src_col is None or tgt_col is None:
-                    if len(df_map.columns) >= 2:
-                        src_col = src_col or df_map.columns[0]
-                        tgt_col = tgt_col or df_map.columns[1]
-
-                if src_col and tgt_col:
-                    for _, row in df_map[[src_col, tgt_col]].dropna(how='all').iterrows():
-                        s = str(row[src_col]).strip()
-                        t = str(row[tgt_col]).strip()
-                        if s and t:
-                            suggested[s] = t
-            except Exception:
-                # ignore parse errors and fall back to heuristic
-                suggested = {}
-
-        # If no mapping file was provided, use Gemini AI for smart column mapping
-        date_columns = []
-        if not suggested:
-            ai_result = get_smart_mapping_from_gemini(legacy_cols, oracle_cols)
-            suggested = ai_result.get("mapping", {})
-            date_columns = ai_result.get("date_columns", [])
-
-        # Ensure mapping entries only apply to the uploaded source (legacy) columns.
-        legacy_lower_map = {c.lower(): c for c in legacy_cols}
-        filtered = {}
-        for s, t in suggested.items():
-            if s in legacy_cols:
-                filtered[s] = t
-            else:
-                sl = s.lower()
-                if sl in legacy_lower_map:
-                    filtered[legacy_lower_map[sl]] = t
-                # otherwise ignore mappings that don't reference the source file
-
-        return {
-            "legacy_columns": legacy_cols,
-            "oracle_columns": oracle_cols,
-            "suggested_mapping": filtered,
-            "date_columns": date_columns,
-        }
-    except HTTPException:
-        raise
+        return {"job_id": job_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
